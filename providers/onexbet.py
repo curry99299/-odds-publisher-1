@@ -14,28 +14,28 @@ HOSTS = [
     "https://1xbet.ng",      # 鏡像備援（主要只有足球）
     "https://1x001.com",
 ]
-# 1xbet sport id → sport 標籤（1=足球；3=籃球。注意 66=板球，非棒球，勿用）
-SPORTS = {1: "soccer", 3: "basketball"}
+# 1xbet sport id → sport 標籤（1=足球、3=籃球、5=棒球；注意 66=板球非棒球）
+SPORTS = {1: "soccer", 3: "basketball", 5: "baseball"}
 HEADERS = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "accept": "application/json"}
+# 兩種路徑樣式都試：service-api（新）與直接 LineFeed（舊，1xbet.com 主站，從美國較全）
+PATHS = ["{host}/service-api/{feed}/Get1x2_VZip", "{host}/{feed}/Get1x2_VZip"]
 
 
 def _get_feed(sport_id, feed):
-    """feed = 'LineFeed'(賽前) 或 'LiveFeed'(滾球)。"""
-    last_err = None
+    """feed = 'LineFeed'(賽前) 或 'LiveFeed'(滾球)。依序試 host × 路徑樣式，回第一個有資料者。"""
     for host in HOSTS:
-        url = (f"{host}/service-api/{feed}/Get1x2_VZip?"
-               f"sports={sport_id}&count=100&lng=en&mode=4&getEmpty=true")
-        try:
-            r = requests.get(url, headers=HEADERS, timeout=20, allow_redirects=False)
-            if r.status_code != 200 or not r.content:
-                last_err = f"{host} http={r.status_code}"
+        for tmpl in PATHS:
+            url = (f"{tmpl.format(host=host, feed=feed)}?"
+                   f"sports={sport_id}&count=100&lng=en&mode=4&getEmpty=true")
+            try:
+                r = requests.get(url, headers=HEADERS, timeout=20, allow_redirects=False)
+                if r.status_code != 200 or not r.content:
+                    continue
+                data = r.json()
+                if data.get("Value"):
+                    return data["Value"], host
+            except Exception:
                 continue
-            data = r.json()
-            if data.get("Value"):
-                return data["Value"], host
-        except Exception as e:
-            last_err = f"{host}: {e}"
-            continue
     return [], None
 
 

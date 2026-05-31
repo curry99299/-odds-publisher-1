@@ -76,22 +76,25 @@ def _priority(e):
     lz = e.get("league_zh") or ""
     le = (e.get("league") or "").lower()
     sport = e.get("sport")
-    if sport == "basketball" and ("美國職籃" in lz or "nba" in le):
+    # 世界盃最優先（超多人關注）
+    if sport == "soccer" and ("世界盃" in lz or "world cup" in le):
         return 0
+    if sport == "basketball" and ("美國職籃" in lz or "nba" in le):
+        return 1
     if sport == "baseball":
         if "美國職棒大聯盟" in lz or "mlb" in le:
-            return 1
-        if "中華職棒" in lz or "cpb" in le:
             return 2
-        if "日本職棒" in lz or "npb" in le or "nippon" in le:
+        if "中華職棒" in lz or "cpb" in le:
             return 3
-        if "韓國職棒" in lz or "kbo" in le or "korea" in le:
+        if "日本職棒" in lz or "npb" in le or "nippon" in le:
             return 4
+        if "韓國職棒" in lz or "kbo" in le or "korea" in le:
+            return 5
     if sport == "soccer" and (any(k in lz for k in ("英超", "西甲", "義甲", "德甲", "法甲"))
                               or any(k in le for k in ("premier league", "la liga", "serie a",
                                                        "bundesliga", "ligue 1"))):
-        return 5
-    return 6
+        return 6
+    return 7
 
 
 def _best(values):
