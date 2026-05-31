@@ -1,0 +1,27 @@
+name: Publish odds to Supabase
+
+# 每 10 分鐘更新賠率並發布到 Supabase Storage（線上 BetLedger 直接讀取，免重新部署）
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}        # 也可在 Actions 頁手動觸發
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Fetch & publish odds
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_BUCKET: odds
+          PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
+          ENABLE_TSL: "0"
+          ENABLE_PANDA: "0"
+        run: python3 publish.py

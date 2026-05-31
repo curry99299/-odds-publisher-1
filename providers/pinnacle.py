@@ -1,0 +1,92 @@
+"""Pinnacle — 透過 guest Arcadia API 抓 moneyline 賠率。
+
+每個運動只需兩次請求：
+  1. /sports/{id}/matchups          → 賽事中繼資料（隊名、開賽時間、聯盟）
+  2. /sports/{id}/markets/straight  → 賠率（依 matchupId join）
+"""
+import datetime
+import requests
+from core.models import MatchOdds, american_to_decimal
+
+# 各運動「比賽進行中」時長（小時）；Pinnacle isLive 在主賽事層不可靠，改用開賽時間推斷
+_LIVE_WINDOW = {"soccer": 2.8, "basketball": 3.2, "baseball": 3.9}
+
+
+def _is_live(sport, start_iso, flag):
+    if flag:
+        return True
+    if not start_iso:
+        return False
+    try:
+        st = datetime.datetime.fromisoformat(start_iso.replace("Z", "+00:00"))
+    except (ValueError, AttributeError):
+        return False
+    now = datetime.datetime.now(datetime.timezone.utc)
+    return st <= now <= st + datetime.timedelta(hours=_LIVE_WINDOW.get(sport, 3.0))
+
+BASE = "https://guest.api.arcadia.pinnacle.com/0.1"
+API_KEY = "CmX2KcMrXuFmNg6YFbmTxE0y9CIrOi0R"
+HEADERS = {
+    "x-api-key": API_KEY,
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+    "accept": "application/json",
+}
+
+# Pinnacle sport id → 我們的 sport 標籤
+SPORTS = {29: "soccer", 4: "basketball", 3: "baseball"}
+
+
+def _get(path):
+    r = requests.get(f"{BASE}{path}", headers=HEADERS, timeout=20)
+    r.raise_for_status()
+    return r.json()
+
+
+def fetch():
+    rows = []
+    for sport_id, sport in SPORTS.items():
+        try:
+            matchups = _get(f"/sports/{sport_id}/matchups?brandId=0")
+            markets = _get(f"/sports/{sport_id}/markets/straight?primaryOnly=true&brandId=0")
+        except Exception as e:
+            print(f"[pinnacle] {sport} 抓取失敗: {e}")
+            continue
+
+        # moneyline 賠率 by matchupId（period 0 = 全場）
+        odds_by_id = {}
+        for m in markets:
+            if m.get("type") != "moneyline" or m.get("period") != 0:
+                continue
+            prices = {p.get("designation"): p.get("price") for p in m.get("prices", [])}
+            odds_by_id[m.get("matchupId")] = prices
+
+        for mu in matchups:
+            if mu.get("parent") is not None:
+                continue  # 只要主賽事，跳過衍生盤
+            prices = odds_by_id.get(mu.get("id")) or {}  # 無賠率也保留賽程（顯示「—」）
+            has_odds = any(prices.get(k) is not None for k in ("home", "away"))
+            parts = {p.get("alignment"): p.get("name") for p in mu.get("participants", [])}
+            home, away = parts.get("home"), parts.get("away")
+            if not home or not away:
+                continue
+            rows.append(MatchOdds(
+                source="pinnacle",
+                sport=sport,
+                home=home,
+                away=away,
+                start=mu.get("startTime"),
+                league=(mu.get("league") or {}).get("name", ""),
+                home_odds=american_to_decimal(prices.get("home")),
+                draw_odds=american_to_decimal(prices.get("draw")),
+                away_odds=american_to_decimal(prices.get("away")),
+                url="https://www.pinnacle.com/",
+                live=_is_live(sport, mu.get("startTime"), bool(mu.get("isLive"))) if has_odds
+                else bool(mu.get("isLive")),
+            ))
+    print(f"[pinnacle] 取得 {len(rows)} 場")
+    return rows
+
+
+if __name__ == "__main__":
+    for r in fetch()[:5]:
+        print(r.to_dict())

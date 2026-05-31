@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+.DS_Store
+data/latest.json
+data/tsl_*.json
