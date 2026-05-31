@@ -3,6 +3,10 @@
 流程：fetch_all.run_once() 重新抓最新賠率 → 把 data/latest.json 上傳到
       Supabase Storage 的公開 bucket，覆寫 odds/latest.json。
 
+繁中翻譯：不在雲端用 API 翻（不放金鑰）。譯名來自 repo 內建的
+      data/team_translations.json（由 translate_pending.py 批次補齊後 commit/push），
+      i18n 於 import 時載入；雲端只讀不寫。
+
 需要環境變數：
   SUPABASE_URL          （預設用 BetLedger 專案）
   SUPABASE_SERVICE_KEY  （Supabase 後台 Settings→API 的 service_role key；務必保密、勿放前端）
@@ -24,7 +28,20 @@ LATEST = os.path.join(os.path.dirname(__file__), "data", "latest.json")
 
 
 def publish():
-    # 1) 重新抓最新賠率
+    # 0) 先把雲端「上一份」下載成本機 latest.json，run_once 才能算出漲跌%
+    #    （GitHub Actions 每次都是全新環境，沒有這步就沒有上一份可比）
+    try:
+        pub = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{OBJECT_PATH}"
+        r = requests.get(pub + f"?t={os.getpid()}", timeout=20)
+        if r.status_code == 200 and r.content:
+            os.makedirs(os.path.dirname(LATEST), exist_ok=True)
+            with open(LATEST, "wb") as f:
+                f.write(r.content)
+            print("[publish] 已下載雲端上一份作為漲跌基準")
+    except Exception as e:
+        print(f"[publish] 下載上一份失敗（首次或無檔，略過）: {e}")
+
+    # 1) 重新抓最新賠率（run_once 內會讀上面那份算漲跌）
     fetch_all.run_once()
 
     if not SERVICE_KEY:

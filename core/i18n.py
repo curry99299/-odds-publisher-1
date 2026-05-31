@@ -218,9 +218,3 @@ def en_from_zh(name: str) -> str:
     if not name:
         return name
     return _ZH_TO_EN.get(name.strip(), name)
-
-
-def zh_league(name: str) -> str:
-    if not name:
-        return name
-    return _LEAGUES.get(name.lower()) or _LEAGUES.get(norm_team(name)) or name
