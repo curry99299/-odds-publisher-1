@@ -10,12 +10,12 @@ from core.normalize import match_key
 
 # 可用鏡像（依序嘗試，遇到 302/空回應就換下一個）
 HOSTS = [
-    "https://1xbet.ng",
-    "https://1xbet.com",
+    "https://1xbet.com",     # 主站：從美國(GitHub)通常供應全部運動（含籃球/棒球）
+    "https://1xbet.ng",      # 鏡像備援（主要只有足球）
     "https://1x001.com",
 ]
-# 1xbet sport id → sport 標籤
-SPORTS = {1: "soccer", 3: "basketball"}
+# 1xbet sport id → sport 標籤（3=籃球、66=棒球）
+SPORTS = {1: "soccer", 3: "basketball", 66: "baseball"}
 HEADERS = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "accept": "application/json"}
 
 
