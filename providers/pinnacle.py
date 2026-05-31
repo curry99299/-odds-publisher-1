@@ -6,7 +6,7 @@
 """
 import datetime
 import requests
-from core.models import MatchOdds, american_to_decimal
+from core.models import MatchOdds, american_to_decimal, _line_key
 
 # 各運動「比賽進行中」時長（小時）；Pinnacle isLive 在主賽事層不可靠，改用開賽時間推斷
 _LIVE_WINDOW = {"soccer": 2.8, "basketball": 3.2, "baseball": 3.9}
@@ -52,13 +52,34 @@ def fetch():
             print(f"[pinnacle] {sport} 抓取失敗: {e}")
             continue
 
-        # moneyline 賠率 by matchupId（period 0 = 全場）
-        odds_by_id = {}
+        # 依 matchupId 收集 moneyline / 讓分 / 大小分（period 0 = 全場、非替代盤）
+        odds_by_id, spreads_by_id, totals_by_id = {}, {}, {}
         for m in markets:
-            if m.get("type") != "moneyline" or m.get("period") != 0:
+            if m.get("period") != 0 or m.get("isAlternate"):
                 continue
-            prices = {p.get("designation"): p.get("price") for p in m.get("prices", [])}
-            odds_by_id[m.get("matchupId")] = prices
+            mid = m.get("matchupId")
+            t = m.get("type")
+            if t == "moneyline":
+                odds_by_id[mid] = {p.get("designation"): p.get("price") for p in m.get("prices", [])}
+            elif t == "spread":
+                for p in m.get("prices", []):
+                    pts = p.get("points")
+                    if pts is None:
+                        continue
+                    # 以主隊讓分線為 key（主隊 points 即主隊讓分）
+                    if p.get("designation") == "home":
+                        spreads_by_id.setdefault(mid, {}).setdefault(_line_key(pts), {})["home"] = american_to_decimal(p.get("price"))
+                    elif p.get("designation") == "away":
+                        spreads_by_id.setdefault(mid, {}).setdefault(_line_key(-pts), {})["away"] = american_to_decimal(p.get("price"))
+            elif t == "total":
+                # Pinnacle total prices 慣例順序為 [over, under]（或用 designation）
+                for i, p in enumerate(m.get("prices", [])):
+                    pts = p.get("points")
+                    if pts is None:
+                        continue
+                    dz = p.get("designation")
+                    side = dz if dz in ("over", "under") else ("over" if i == 0 else "under")
+                    totals_by_id.setdefault(mid, {}).setdefault(_line_key(pts), {})[side] = american_to_decimal(p.get("price"))
 
         for mu in matchups:
             if mu.get("parent") is not None:
@@ -82,6 +103,8 @@ def fetch():
                 url="https://www.pinnacle.com/",
                 live=_is_live(sport, mu.get("startTime"), bool(mu.get("isLive"))) if has_odds
                 else bool(mu.get("isLive")),
+                spreads=spreads_by_id.get(mu.get("id")) or {},
+                totals=totals_by_id.get(mu.get("id")) or {},
             ))
     print(f"[pinnacle] 取得 {len(rows)} 場")
     return rows

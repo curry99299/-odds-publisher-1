@@ -8,7 +8,7 @@ import json
 import re
 import datetime
 import requests
-from core.models import MatchOdds, prob_to_decimal
+from core.models import MatchOdds, prob_to_decimal, _line_key
 from core.normalize import teams_similar, norm_team
 
 # 各運動「比賽進行中」時長（小時），用來由開賽時間推斷滾球
@@ -151,6 +151,40 @@ def fetch():
         if ho is None and ao is None:
             continue
 
+        # 讓分(spreads) / 大小分(totals)
+        sp_dict, to_dict = {}, {}
+        for m in e.get("markets", []):
+            smt = m.get("sportsMarketType")
+            prs = _jload(m.get("outcomePrices"), [])
+            if smt not in ("spreads", "totals") or len(prs) < 2:
+                continue
+            try:
+                line = float(m.get("line"))
+            except (TypeError, ValueError):
+                continue
+            yes, no = _clean_prob(prs, 0), _clean_prob(prs, 1)
+            if smt == "spreads":
+                mt = re.search(r"Spread:\s*(.+?)\s*\(", m.get("question") or "")
+                team = mt.group(1) if mt else ""
+                if teams_similar(norm_team(team), norm_team(home)):
+                    d = sp_dict.setdefault(_line_key(line), {})
+                    if yes:
+                        d["home"] = yes
+                    if no:
+                        d["away"] = no
+                elif teams_similar(norm_team(team), norm_team(away)):
+                    d = sp_dict.setdefault(_line_key(-line), {})  # 主隊讓分線 = 客隊線取負
+                    if yes:
+                        d["away"] = yes
+                    if no:
+                        d["home"] = no
+            else:  # totals
+                d = to_dict.setdefault(_line_key(line), {})
+                if yes:
+                    d["over"] = yes
+                if no:
+                    d["under"] = no
+
         # 優先用精確開賽時間（startTime / gameStartTime），slug 日期僅最後備援
         precise = bool(e.get("startTime") or e.get("gameStartTime"))
         start = (e.get("startTime") or e.get("gameStartTime")
@@ -168,6 +202,8 @@ def fetch():
             home_odds=ho,
             draw_odds=do,
             away_odds=ao,
+            spreads=sp_dict,
+            totals=to_dict,
             url=f"https://polymarket.com/event/{e.get('slug', '')}",
         )))
 

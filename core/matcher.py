@@ -6,6 +6,21 @@
 from datetime import datetime, timezone
 from .normalize import norm_team, teams_similar
 from .i18n import zh_team, zh_league
+from .models import _line_key
+
+
+def _agg_lines(lines_map, keys):
+    """把 {line: {source: {k1,k2}}} 整理成排序清單，每條線含各家賠率與各邊最佳。"""
+    out = []
+    for line in sorted(lines_map, key=lambda x: float(x)):
+        srcs = lines_map[line]
+        best = {}
+        for k in keys:
+            cand = [(s, v.get(k)) for s, v in srcs.items() if v.get(k)]
+            best[k] = ({"source": max(cand, key=lambda x: x[1])[0],
+                        "odds": max(cand, key=lambda x: x[1])[1]} if cand else None)
+        out.append({"line": line, "sources": srcs, "best": best, "n": len(srcs)})
+    return out
 
 
 def _parse_dt(s):
@@ -168,6 +183,23 @@ def merge(rows):
         best_away = _best([(s, v["away"]) for s, v in sources.items()])
         best_map = {"home": best_home, "draw": best_draw, "away": best_away}
         leg_list = ["home", "draw", "away"] if has_draw else ["home", "away"]
+
+        # 讓分 / 大小分：對齊 anchor 主客方向（來源翻轉時讓分線變號、主客對調；大小分不受影響）
+        spread_lines, total_lines = {}, {}
+        for r in ev["rows"]:
+            swap = not teams_similar(norm_team(anchor.home), norm_team(r.home))
+            for line, d in (r.spreads or {}).items():
+                try:
+                    lv = float(line)
+                except (TypeError, ValueError):
+                    continue
+                if swap:
+                    spread_lines.setdefault(_line_key(-lv), {})[r.source] = {"home": d.get("away"), "away": d.get("home")}
+                else:
+                    spread_lines.setdefault(_line_key(lv), {})[r.source] = {"home": d.get("home"), "away": d.get("away")}
+            for line, d in (r.totals or {}).items():
+                total_lines.setdefault(_line_key(line), {})[r.source] = {"over": d.get("over"), "under": d.get("under")}
+
         out.append({
             "sport": anchor.sport,
             "home": anchor.home,
@@ -184,6 +216,8 @@ def merge(rows):
             "best": best_map,
             "arb": _arb(sources, best_map, leg_list),
             "source_count": len(sources),
+            "spread": _agg_lines(spread_lines, ("home", "away")),
+            "total": _agg_lines(total_lines, ("over", "under")),
         })
 
     # 排序：聯盟優先序(NBA>MLB>中職>日職>韓職>五大聯賽>其他) → 滾球優先 → 來源數多 → 開賽時間

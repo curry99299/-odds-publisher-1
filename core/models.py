@@ -47,6 +47,18 @@ class MatchOdds:
     url: str = ""
     live: bool = False          # 是否為滾球（進行中）
     score: str = ""             # 滾球即時比分/節次，如 "1:0 · 下半場 67'"
+    # 讓分：{ "主隊讓分線(str)": {"home": odds, "away": odds} }，例 {"-1.5":{"home":1.95,"away":1.9}}
+    spreads: dict = field(default_factory=dict)
+    # 大小分：{ "總分線(str)": {"over": odds, "under": odds} }，例 {"8.5":{"over":1.9,"under":1.92}}
+    totals: dict = field(default_factory=dict)
 
     def to_dict(self):
         return asdict(self)
+
+
+def _line_key(x):
+    """把線值正規化成統一字串 key，例 -1.5 → '-1.5'、8 → '8.0'。"""
+    try:
+        return f"{float(x):g}"
+    except (TypeError, ValueError):
+        return str(x)
