@@ -1,9 +1,9 @@
 name: Publish odds to Supabase
 
-# 每 10 分鐘更新賠率並發布到 Supabase Storage（線上 BetLedger 直接讀取，免重新部署）
+# 每 5 分鐘更新賠率並發布到 Supabase Storage（線上 BetLedger 直接讀取，免重新部署）
 on:
   schedule:
-    - cron: "*/10 * * * *"
+    - cron: "*/5 * * * *"
   workflow_dispatch: {}        # 也可在 Actions 頁手動觸發
 
 jobs:
