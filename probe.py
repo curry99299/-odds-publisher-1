@@ -3,16 +3,19 @@
 """
 import os
 import json
+import time
 import requests
 
 SUPA = os.environ.get("SUPABASE_URL", "https://yxpoqdihxnkxcnzebrwv.supabase.co").rstrip("/")
 KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
-H = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+# accept header 是關鍵：少了會被回 406 NotAcceptable
+H = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "accept": "application/json"}
 HOSTS = ["https://1xbet.com", "https://1xbet.ng"]
 
 
 def get(host, feed, sid):
     try:
+        time.sleep(0.25)   # 放慢避免被限流
         r = requests.get(f"{host}/service-api/{feed}/Get1x2_VZip?sports={sid}&count=2&lng=en&mode=4&getEmpty=true",
                          headers=H, timeout=7, allow_redirects=False)
         if r.status_code == 200 and r.content:
