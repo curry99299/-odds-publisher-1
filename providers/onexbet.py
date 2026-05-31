@@ -14,8 +14,8 @@ HOSTS = [
     "https://1xbet.ng",      # 鏡像備援（主要只有足球）
     "https://1x001.com",
 ]
-# 1xbet sport id → sport 標籤（3=籃球、66=棒球）
-SPORTS = {1: "soccer", 3: "basketball", 66: "baseball"}
+# 1xbet sport id → sport 標籤（1=足球；3=籃球。注意 66=板球，非棒球，勿用）
+SPORTS = {1: "soccer", 3: "basketball"}
 HEADERS = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "accept": "application/json"}
 
 
