@@ -5,7 +5,7 @@ E 陣列中 G==1 為 1x2 主盤，T: 1=主勝 2=和 3=客勝，C=歐式賠率。
 """
 import requests
 from datetime import datetime, timezone
-from core.models import MatchOdds
+from core.models import MatchOdds, _line_key
 from core.normalize import match_key
 
 # 可用鏡像（依序嘗試，遇到 302/空回應就換下一個）
@@ -72,6 +72,26 @@ def _odds_from_E(E):
     return o
 
 
+def _lines_from_E(E):
+    """從 E 取讓分(G==2: T7主/T8客) 與 大小分(G==17: T9大/T10小)。C 即歐式賠率。"""
+    sp, to = {}, {}
+    for m in E:
+        g, t, p, c = m.get("G"), m.get("T"), m.get("P"), m.get("C")
+        if p is None or c is None:
+            continue
+        if g == 2:        # 讓分（主隊讓分線為 key）
+            if t == 7:
+                sp.setdefault(_line_key(p), {})["home"] = c        # 主隊讓 P
+            elif t == 8:
+                sp.setdefault(_line_key(-p), {})["away"] = c       # 客隊讓 P → 主隊線 = -P
+        elif g == 17:     # 大小分
+            if t == 9:
+                to.setdefault(_line_key(p), {})["over"] = c
+            elif t == 10:
+                to.setdefault(_line_key(p), {})["under"] = c
+    return sp, to
+
+
 def fetch():
     # 1xbet LiveFeed 同一場會拆成多筆：有些只有「正確比分」沒賠率(E空)、有些有賠率但比分是子盤垃圾(如 3:3)。
     # 故同場合併：賠率取「有賠率(且滾球優先)」那筆、比分取「各節比分(PS)最完整」那筆。
@@ -94,13 +114,14 @@ def fetch():
                 g = groups.setdefault(key, {
                     "home": home, "away": away, "sport": sport, "start": start,
                     "league": e.get("LE", ""), "o": {1: None, 2: None, 3: None},
-                    "live": False, "score": "", "sq": (-1, -1),
+                    "live": False, "score": "", "sq": (-1, -1), "sp": {}, "to": {},
                     "host": host, "has_odds": False, "odds_live": False})
                 # 取賠率：優先「有賠率且為滾球」，否則先有先存
                 if has_odds and (not g["has_odds"] or (is_live and not g["odds_live"])):
                     g["o"], g["has_odds"], g["odds_live"] = o, True, is_live
                     g["home"], g["away"] = home, away      # 以賠率筆的主客方向為準（比分同方向）
                     g["start"], g["league"], g["host"] = start, e.get("LE", ""), host
+                    g["sp"], g["to"] = _lines_from_E(e.get("E", []))  # 讓分/大小分取同一筆
                 # 取比分：滾球中各節最完整者
                 if is_live:
                     g["live"] = True
@@ -120,7 +141,8 @@ def fetch():
             start=g["start"], league=g["league"],
             home_odds=o[1], draw_odds=o[2], away_odds=o[3],
             url=f"{g['host'] or 'https://1xbet.com'}/en/{'live' if g['live'] else 'line'}",
-            live=g["live"], score=g["score"]))
+            live=g["live"], score=g["score"],
+            spreads=g.get("sp") or {}, totals=g.get("to") or {}))
     live_n = sum(1 for r in rows if r.live)
     print(f"[1xbet] 取得 {len(rows)} 場（滾球 {live_n}）")
     return rows
