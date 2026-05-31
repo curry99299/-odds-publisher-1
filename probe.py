@@ -13,18 +13,22 @@ H = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "accept": "appli
 HOSTS = ["https://1xbet.com", "https://1xbet.ng"]
 
 
-def get(host, feed, sid):
-    try:
-        time.sleep(0.25)   # 放慢避免被限流
-        r = requests.get(f"{host}/service-api/{feed}/Get1x2_VZip?sports={sid}&count=2&lng=en&mode=4&getEmpty=true",
-                         headers=H, timeout=7, allow_redirects=False)
-        if r.status_code == 200 and r.content:
-            v = r.json().get("Value", [])
-            if v:
-                return v
-    except Exception:
-        return None
-    return None
+def sports_list(host, feed):
+    """抓運動總清單（一個請求回所有 id+名稱+場數），不需逐一掃描。"""
+    for params in (
+        f"lng=en&country=1&partner=1&virtualSports=false&groupChamps=true&getEmpty=true",
+        f"lng=en&virtualSports=false&groupChamps=true",
+    ):
+        try:
+            r = requests.get(f"{host}/service-api/{feed}/GetSportsShortZip?{params}",
+                             headers=H, timeout=15, allow_redirects=False)
+            if r.status_code == 200 and r.content:
+                v = r.json().get("Value", [])
+                if v:
+                    return v
+        except Exception:
+            pass
+    return []
 
 
 def main():
@@ -32,13 +36,9 @@ def main():
     for host in HOSTS:
         rows = []
         for feed in ("LineFeed", "LiveFeed"):
-            for sid in range(1, 121):
-                v = get(host, feed, sid)
-                if v:
-                    e = v[0]
-                    rows.append({"feed": feed, "id": sid, "n": len(v),
-                                 "league": e.get("LE", ""),
-                                 "match": f"{e.get('O1','')} vs {e.get('O2','')}"})
+            for s in sports_list(host, feed):
+                rows.append({"feed": feed, "id": s.get("I"), "name": s.get("N", s.get("L", "")),
+                             "champs": s.get("CI"), "games": s.get("GC")})
         if rows:
             out["host_used"] = host
             out["sports"] = rows
