@@ -10,7 +10,7 @@ from .models import _line_key
 
 
 def _agg_lines(lines_map, keys):
-    """把 {line: {source: {k1,k2}}} 整理成排序清單，每條線含各家賠率與各邊最佳。"""
+    """把 {line: {source: {k1,k2}}} 整理成排序清單；每條線含各家賠率、各邊最佳、及跨家套利。"""
     out = []
     for line in sorted(lines_map, key=lambda x: float(x)):
         srcs = lines_map[line]
@@ -19,7 +19,15 @@ def _agg_lines(lines_map, keys):
             cand = [(s, v.get(k)) for s, v in srcs.items() if v.get(k)]
             best[k] = ({"source": max(cand, key=lambda x: x[1])[0],
                         "odds": max(cand, key=lambda x: x[1])[1]} if cand else None)
-        out.append({"line": line, "sources": srcs, "best": best, "n": len(srcs)})
+        # 套利：兩邊各取各家最佳，1/賠率加總 < 1 即有套利空間
+        b0, b1 = best[keys[0]], best[keys[1]]
+        arb, margin = False, None
+        if b0 and b1:
+            inv = 1.0 / b0["odds"] + 1.0 / b1["odds"]
+            margin = round((1.0 - inv) * 100, 2)
+            arb = inv < 1.0
+        out.append({"line": line, "sources": srcs, "best": best,
+                    "n": len(srcs), "arb": arb, "margin": margin})
     return out
 
 

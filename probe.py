@@ -1,55 +1,47 @@
-"""一次性診斷：用 onexbet 相同的可行方式（accept header + host fallback），
-精準測試少數候選 sport id（放慢避免限流），找出籃球/棒球的 id。
+"""一次性診斷：抓一場 1xbet 賽事的完整盤口(E 陣列)，找讓分/大小分的代碼與線值。
 結果上傳 Supabase Storage odds/probe.json。
 """
 import os
 import json
-import time
 import requests
 
 SUPA = os.environ.get("SUPABASE_URL", "https://yxpoqdihxnkxcnzebrwv.supabase.co").rstrip("/")
 KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 H = {"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)", "accept": "application/json"}
 HOSTS = ["https://1xbet.com", "https://1xbet.ng"]
-# 1xbet 常見候選 id（含足球1做對照、板球66確認）
-CAND = [1, 2, 3, 4, 5, 8, 9, 10, 11, 12, 13, 17, 29, 40, 66, 85, 107, 128]
-
-
-def get_feed(sid, feed):
-    for host in HOSTS:
-        try:
-            time.sleep(0.8)   # 放慢，避免限流
-            r = requests.get(f"{host}/service-api/{feed}/Get1x2_VZip?sports={sid}&count=2&lng=en&mode=4&getEmpty=true",
-                             headers=H, timeout=12, allow_redirects=False)
-            if r.status_code == 200 and r.content:
-                v = r.json().get("Value", [])
-                if v:
-                    return v, host
-        except Exception:
-            pass
-    return None, None
 
 
 def main():
-    rows = []
-    for feed in ("LineFeed", "LiveFeed"):
-        for sid in CAND:
-            v, host = get_feed(sid, feed)
-            if v:
-                e = v[0]
-                rows.append({"feed": feed, "id": sid, "host": host, "n": len(v),
-                             "league": e.get("LE", ""),
-                             "match": f"{e.get('O1','')} vs {e.get('O2','')}"})
-    out = {"sports": rows}
+    out = {"host": None, "events": []}
+    for host in HOSTS:
+        try:
+            r = requests.get(f"{host}/service-api/LineFeed/Get1x2_VZip?sports=1&count=3&lng=en&mode=4&getEmpty=true",
+                             headers=H, timeout=15, allow_redirects=False)
+            if r.status_code != 200 or not r.content:
+                continue
+            v = r.json().get("Value", [])
+            if not v:
+                continue
+            out["host"] = host
+            for e in v[:2]:
+                out["events"].append({
+                    "O1": e.get("O1"), "O2": e.get("O2"), "LE": e.get("LE"),
+                    # E 陣列：每個盤口 {T:類型, G:群組, P:線值, C:賠率}
+                    "E": [{"T": x.get("T"), "G": x.get("G"), "P": x.get("P"), "C": x.get("C")}
+                          for x in (e.get("E") or [])],
+                })
+            break
+        except Exception as ex:
+            out["err"] = str(ex)
     body = json.dumps(out, ensure_ascii=False).encode()
     if KEY:
         r = requests.post(f"{SUPA}/storage/v1/object/odds/probe.json",
                           headers={"Authorization": f"Bearer {KEY}", "apikey": KEY,
                                    "Content-Type": "application/json", "x-upsert": "true"},
                           data=body, timeout=30)
-        print(f"upload http={r.status_code} found={len(rows)}")
+        print(f"upload http={r.status_code} host={out['host']} events={len(out['events'])}")
     else:
-        print(body.decode())
+        print(body.decode()[:2000])
 
 
 if __name__ == "__main__":

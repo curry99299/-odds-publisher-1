@@ -47,16 +47,19 @@ def fetch():
     for sport_id, sport in SPORTS.items():
         try:
             matchups = _get(f"/sports/{sport_id}/matchups?brandId=0")
-            markets = _get(f"/sports/{sport_id}/markets/straight?primaryOnly=true&brandId=0")
+            # primaryOnly=false → 含替代盤，讓分/大小分有多條線，才能跨家同線比較與找套利
+            markets = _get(f"/sports/{sport_id}/markets/straight?primaryOnly=false&brandId=0")
         except Exception as e:
             print(f"[pinnacle] {sport} 抓取失敗: {e}")
             continue
 
-        # 依 matchupId 收集 moneyline / 讓分 / 大小分（period 0 = 全場、非替代盤）
+        # 依 matchupId 收集 moneyline(主盤) / 讓分 / 大小分(含替代線)，period 0 = 全場
         odds_by_id, spreads_by_id, totals_by_id = {}, {}, {}
         for m in markets:
-            if m.get("period") != 0 or m.get("isAlternate"):
+            if m.get("period") != 0:
                 continue
+            if m.get("type") == "moneyline" and m.get("isAlternate"):
+                continue  # moneyline 只要主盤
             mid = m.get("matchupId")
             t = m.get("type")
             if t == "moneyline":
