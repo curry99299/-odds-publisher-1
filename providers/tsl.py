@@ -30,14 +30,14 @@ BASE = "https://www.playsport.cc/predict/games?allianceid={aid}"
 # allianceid → (sport, 聯盟顯示名)。預設只抓會與其他來源對得上的聯盟。
 ALLIANCE = {
     1:  ("baseball", "MLB"),
+    2:  ("baseball", "日本職棒"),   # 實測確認：2=NPB（非 9）
     6:  ("baseball", "中華職棒"),
-    9:  ("baseball", "日本職棒"),
-    16: ("baseball", "韓國職棒"),
+    9:  ("baseball", "韓國職棒"),   # 實測確認：9=KBO（非日職）
     3:  ("basketball", "NBA"),
     18: ("basketball", "WNBA"),
     4:  ("soccer", "足球"),
 }
-DEFAULT_ALLIANCES = [1, 6, 3, 4, 9, 16]
+DEFAULT_ALLIANCES = [1, 2, 6, 9, 3, 4]
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
 CACHE = os.path.join(DATA_DIR, "tsl_cache.json")

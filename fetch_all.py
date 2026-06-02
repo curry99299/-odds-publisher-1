@@ -12,7 +12,7 @@ from datetime import datetime, timezone, timedelta
 from core.matcher import merge, _priority
 from core import translate
 from core.normalize import match_key, norm_team, teams_similar
-from providers import pinnacle, polymarket, onexbet, tsl, panda, espn_scores
+from providers import pinnacle, polymarket, onexbet, tsl, panda, espn_scores, playsport_results
 
 
 _SCORE_WIN = {"baseball": 4.5, "basketball": 3.5, "soccer": 3.0}
@@ -151,12 +151,20 @@ def run_once():
                                    -e["source_count"], e["start"] or "9999"))
     except Exception as e:
         print(f"[fetch_all] ESPN 比分略過: {e}")
+    # playsport 終場比分（供 MS AI 結算已結束但即時源已下架的場；失敗不影響主流程）
+    try:
+        results = playsport_results.fetch_results()
+        print(f"[playsport_results] 終場比分 {len(results)} 場")
+    except Exception as e:
+        results = []
+        print(f"[playsport_results] 略過: {e}")
     payload = {
         "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "sources": status,
         "event_count": len(events),
         "multi_source_count": sum(1 for e in events if e["source_count"] >= 2),
         "events": events,
+        "results": results,
     }
     tmp = LATEST + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
