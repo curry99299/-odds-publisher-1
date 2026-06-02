@@ -120,7 +120,6 @@ def run_once():
                 "ok": True,
                 "count": len(rows),
                 "note": "" if rows else (
-                    "需設 JBOT_TOKEN（付費密鑰）" if key == "tsl" else
                     "需登入（ENABLE_PANDA）" if key == "panda" else "目前無賽事"),
                 "ms": int((time.time() - t0) * 1000),
             }
