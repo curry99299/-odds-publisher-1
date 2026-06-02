@@ -48,7 +48,7 @@ def _txt(el):
     return el.text_content().strip() if el is not None else ""
 
 
-def _parse(aid, text):
+def _parse(aid, text, date_iso):
     sport, league_zh = ALLIANCE[aid]
     en_map = PS_EN.get(aid, {})
     doc = LH.fromstring(text)
@@ -70,6 +70,7 @@ def _parse(aid, text):
             "away_zh": away_zh, "home_zh": home_zh,
             "away": en_map.get(away_zh, away_zh), "home": en_map.get(home_zh, home_zh),
             "score": f"{home_score}:{away_score}",   # 主:客（與 enrich 慣例一致）
+            "date": date_iso,   # 台灣日期 YYYY-MM-DD（供前端日期比對，避免系列賽前一天結果套到今天）
             "live": False, "final": True,
         })
     return out
@@ -83,11 +84,12 @@ def fetch_results():
     seen, out = set(), []
     for aid in ALLIANCE:
         for date in dates:
+            date_iso = f"{date[:4]}-{date[4:6]}-{date[6:]}"
             try:
                 r = requests.get(RESULT.format(aid=aid, date=date), headers=UA, timeout=20)
                 r.raise_for_status()
-                for g in _parse(aid, r.text):
-                    key = (g["league_zh"], g["home_zh"], g["away_zh"])
+                for g in _parse(aid, r.text, date_iso):
+                    key = (g["league_zh"], g["home_zh"], g["away_zh"], g["date"])  # 含日期：系列賽同隊不同天各留一筆
                     if key in seen:
                         continue
                     seen.add(key)
