@@ -7,6 +7,9 @@
   {gid}_aname / {gid}_hname  → 客/主隊名（短中文）
   {gid}_as_b  / {gid}_hs_b   → 客/主分
   {gid}_inning               → 中文進度（局上/局下/第N節/上下半…）
+
+中職（aid=6）等沒有 {gid}_inning 元素，改以每局得分欄 {gid}_as1.._hs1.. 推算局數，
+狀態文字看 {gid}_addinfo（「比賽結束」=終場）。故以 {gid}_aname 為錨點掃所有場。
 """
 import re
 
@@ -48,18 +51,45 @@ def _txt(doc, eid):
     return (v or "").strip()
 
 
+def _inning_from_box(doc, gid):
+    """棒球無 _inning 元素時（中職），用每局得分欄推算當前局數＋上下半。
+    取最後一個有得分（任一隊）的局；該局主隊欄已填→局下（主隊進攻中），否則局上。"""
+    last = 0
+    home_filled = False
+    for i in range(1, 16):
+        a = _txt(doc, f"{gid}_as{i}")
+        h = _txt(doc, f"{gid}_hs{i}")
+        if a.isdigit() or h.isdigit():
+            last = i
+            home_filled = h.isdigit()
+    if not last:
+        return ""
+    return f"{last}局{'下' if home_filled else '上'}"
+
+
 def _parse(aid, sport, text):
     doc = LH.fromstring(text)
     en_map = PS_EN.get(aid, {})
     out = []
-    for el in doc.xpath('//*[contains(@id,"_inning")]'):
-        gid = el.get("id").replace("_inning", "")
-        status = el.text_content().strip()
-        if not status or _DONE.search(status):
+    seen = set()
+    # 以 _aname 為錨點掃所有場（_inning 不是每個聯賽都有；中職就沒有）
+    for el in doc.xpath('//*[contains(@id,"_aname")]'):
+        gid = el.get("id").replace("_aname", "")
+        if gid in seen:
             continue
+        seen.add(gid)
         a_zh, h_zh = _txt(doc, gid + "_aname"), _txt(doc, gid + "_hname")
         as_, hs = _txt(doc, gid + "_as_b"), _txt(doc, gid + "_hs_b")
         if not a_zh or not h_zh or not hs.isdigit() or not as_.isdigit():
+            continue
+        # 狀態：優先 _inning 元素；沒有就用每局得分推（中職）。終場/未開賽 → 不算 live
+        status = _txt(doc, gid + "_inning")
+        addinfo = _txt(doc, gid + "_addinfo")
+        if _DONE.search(status) or _DONE.search(addinfo):
+            continue
+        if not status:
+            status = _inning_from_box(doc, gid)
+        if not status:  # 無局數可推 = 多半未開賽
             continue
         out.append({
             "sport": sport, "alliance": aid,
