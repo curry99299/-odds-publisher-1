@@ -30,6 +30,19 @@ ALLIANCES = {
 _DONE = re.compile(r"結束|完場|完賽|未開賽|取消|延賽|保留|PPD", re.I)
 
 
+def _get(url, tries=2):
+    """抓頁面；playsport 從海外 IP 偶爾慢/丟包，故重試＋較長 timeout，降低漏抓一輪的機率。"""
+    last = None
+    for _ in range(tries):
+        try:
+            r = requests.get(url, headers=UA, timeout=25)
+            r.raise_for_status()
+            return r.text
+        except Exception as e:  # noqa: BLE001
+            last = e
+    raise last
+
+
 def _txt(doc, eid):
     v = doc.xpath(f'string(//*[@id="{eid}"])')
     return (v or "").strip()
@@ -63,9 +76,7 @@ def fetch_live():
     games = []
     for aid, sport in ALLIANCES.items():
         try:
-            r = requests.get(LIVE.format(aid=aid), headers=UA, timeout=20)
-            r.raise_for_status()
-            games += _parse(aid, sport, r.text)
+            games += _parse(aid, sport, _get(LIVE.format(aid=aid)))
         except Exception as e:  # noqa: BLE001 - 單一聯賽失敗不影響其他
             print(f"[playsport_live] aid={aid} 失敗: {e}")
     print(f"[playsport_live] 即時比分 {len(games)} 場")
