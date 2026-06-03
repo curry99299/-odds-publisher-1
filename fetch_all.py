@@ -219,40 +219,27 @@ def run_once():
 
     events = merge(all_rows)
     _apply_deltas(events, prev_events)
-    # ESPN 即時比分 + 校正 live 狀態，最後依新狀態重新排序
-    espn_scores_map = {}
+    # ===== 比分／滾球狀態：只用 playsport（棄用 ESPN / 1xbet / polymarket）=====
+    # 多來源互相打架會一直冒 bug（英文局數、polymarket 依時間推斷的假 live、過時鏡像…），故：
+    #   先清掉 odds 來源自帶的 live/比分 → 滾球與比分一律由 playsport 決定。
+    for e in events:
+        e["live"] = False
+        e["score"] = ""
     try:
-        espn_scores_map = espn_scores.fetch_scores()
-        _apply_scores(events, espn_scores_map)
-        # playsport 即時比分「優先」：套在 ESPN 之後覆寫（中職/日職/韓職等的滾球比分＋中文局數）
-        try:
-            _apply_playsport_live(events, playsport_live.fetch_live())
-        except Exception as e:
-            print(f"[playsport_live] 略過: {e}")
-        _clear_future_live(events)
-        events.sort(key=lambda e: (_priority(e), not e["live"],
-                                   -e["source_count"], e["start"] or "9999"))
+        # playsport 即時比分（唯一 live 來源）：名字雙向比對，時間相同但主客相反也認得
+        _apply_playsport_live(events, playsport_live.fetch_live())
     except Exception as e:
-        print(f"[fetch_all] ESPN 比分略過: {e}")
-    # playsport 終場比分（供 MS AI 結算已結束但即時源已下架的場；失敗不影響主流程）
+        print(f"[playsport_live] 略過: {e}")
+    _clear_future_live(events)  # 安全網：未開賽不可能 live
+    events.sort(key=lambda e: (_priority(e), not e["live"], -e["source_count"], e["start"] or "9999"))
+    # playsport 終場比分（唯一終場來源）
     try:
         results = playsport_results.fetch_results()
         print(f"[playsport_results] 終場比分 {len(results)} 場")
     except Exception as e:
         results = []
         print(f"[playsport_results] 略過: {e}")
-    # ESPN 獨立 live 場次（目前限冰球）：賠率源（Polymarket 依 volume 分頁）間歇漏抓時，
-    # 靠 ESPN 穩定維持滾球場不消失。已在 events 出現的場（賠率源有抓到）就跳過避免重複。
-    try:
-        have = {(e["sport"], match_key(e["home"], e["away"], e["sport"])) for e in events}
-        live_extra = [le for le in espn_scores.live_events_from_scores(espn_scores_map, {"hockey"})
-                      if (le["sport"], match_key(le["home"], le["away"], le["sport"])) not in have]
-        if live_extra:
-            print(f"[espn] 補獨立 live 場 {len(live_extra)} 場（賠率源未涵蓋）")
-        results.extend(live_extra)
-    except Exception as e:
-        print(f"[espn] 獨立 live 場略過: {e}")
-    # 從 score 字串解析出數值比分欄（events + results），供前端直接讀、免各自字串解析
+    # 從 score 字串解析出數值比分欄（events + results），供前端直接讀
     _attach_numeric_scores(events)
     _attach_numeric_scores(results)
     payload = {
