@@ -53,6 +53,7 @@ def _build_short_map():
     src_path = os.path.join(os.path.dirname(__file__), "..", "core", "i18n.py")
     section_sport = {
         "MLB": "baseball", "NBA": "basketball", "WNBA": "basketball",
+        "NHL": "hockey", "冰球": "hockey",
         "國家隊": "soccer", "英超": "soccer", "西甲": "soccer", "義甲": "soccer",
         "德甲": "soccer", "法甲": "soccer", "巴甲": "soccer", "南美": "soccer",
     }
@@ -239,6 +240,11 @@ def _alliances():
 
 
 def fetch():
+    # 允許用環境變數關閉（雲端 GitHub Actions 設 ENABLE_TSL=0 以避開 geo/穩定性問題）。
+    # 之前此旗標在 workflow 有設但程式碼從不讀取＝無效旗標，雲端仍會抓 playsport。
+    if os.getenv("ENABLE_TSL", "1") == "0":
+        print("[tsl] ENABLE_TSL=0，略過台灣運彩抓取")
+        return []
     cache = _load(CACHE, {})
     now = time.time()
     if cache.get("ts") and now - cache["ts"] < CACHE_TTL and cache.get("rows"):

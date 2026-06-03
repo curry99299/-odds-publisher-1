@@ -22,6 +22,6 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SUPABASE_BUCKET: odds
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
-          ENABLE_TSL: "0"
+          ENABLE_TSL: "1"
           ENABLE_PANDA: "0"
         run: python3 publish.py

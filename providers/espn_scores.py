@@ -7,13 +7,18 @@ state: 'pre'(未開始) / 'in'(進行中) / 'post'(已結束)。
 import re
 import requests
 from core.normalize import match_key
+from core import i18n
 
 # (ESPN 路徑, 我們的 sport)
 BOARDS = [
     ("baseball/mlb", "baseball"),
     ("baseball/college-baseball", "baseball"),
     ("basketball/nba", "basketball"),
+    ("hockey/nhl", "hockey"),
 ]
+# ESPN 路徑 → 英文聯盟標籤（給獨立 live 來源用）
+LEAGUE_EN = {"baseball/mlb": "MLB", "baseball/college-baseball": "NCAA Baseball",
+             "basketball/nba": "NBA", "hockey/nhl": "NHL"}
 BASE = "https://site.api.espn.com/apis/site/v2/sports"
 HEADERS = {"user-agent": "Mozilla/5.0", "accept": "application/json"}
 
@@ -31,6 +36,17 @@ def _zh_status(sport, st):
         if m:
             half = {"top": "上", "bot": "下", "bottom": "下", "mid": "中", "end": "末"}[m.group(1).lower()]
             return f"{m.group(2)}局{half}"
+    elif sport == "hockey":
+        # NHL：shortDetail 形如 '17:04 - 3rd' / 'End of 2nd'；period 1-3 正規、4 延長、5 互射
+        per = st.get("period")
+        clk = st.get("displayClock")
+        if re.search(r"end of", short, re.I):
+            m = re.search(r"(\d+)", short)
+            return f"第{m.group(1)}節結束" if m else "節間休息"
+        if per:
+            label = "互射" if per >= 5 else "延長賽" if per == 4 else f"第{per}節"
+            return label + (f" {clk}" if clk and clk not in ("0:00", "") else "")
+        return short
     else:
         if re.search(r"half", short, re.I):
             return "中場"
@@ -58,11 +74,13 @@ def _board(path, sport):
                 continue
             home = h["team"]["displayName"]
             away = a["team"]["displayName"]
-            out[(sport, match_key(home, away))] = {
+            out[(sport, match_key(home, away, sport))] = {
                 "home": home, "away": away,
                 "hs": h.get("score"), "as": a.get("score"),
                 "state": st.get("type", {}).get("state"),
                 "status": _zh_status(sport, st),
+                "league": LEAGUE_EN.get(path, sport),
+                "start": e.get("date"),
             }
     except Exception as ex:
         print(f"[espn] {path} 失敗: {ex}")
@@ -76,6 +94,28 @@ def fetch_scores():
     n_live = sum(1 for v in scores.values() if v["state"] == "in")
     print(f"[espn] 比分 {len(scores)} 場（進行中 {n_live}）")
     return scores
+
+
+def live_events_from_scores(scores, sports):
+    """把 ESPN 進行中(state=in)的場做成獨立 live 場次 dict（無賠率，純比分＋live 旗標）。
+    用途：賠率來源（如 Polymarket 依 volume 分頁）間歇漏抓時，靠 ESPN 穩定維持滾球場不消失。
+    僅針對 `sports` 指定的運動（目前冰球），避免與賠率源充足的棒球/籃球重複造列。"""
+    out = []
+    for (sport, _key), v in scores.items():
+        if sport not in sports or v.get("state") != "in":
+            continue
+        league = v.get("league", sport)
+        hs, as_ = v.get("hs"), v.get("as")
+        sc = f"{hs}:{as_}" if hs is not None and as_ is not None else ""
+        out.append({
+            "sport": sport,
+            "league": league, "league_zh": i18n.zh_league(league),
+            "home": v["home"], "away": v["away"],
+            "home_zh": i18n.zh_team(v["home"]), "away_zh": i18n.zh_team(v["away"]),
+            "score": " · ".join(x for x in [sc, v.get("status", "")] if x),
+            "start": v.get("start"), "live": True, "final": False,
+        })
+    return out
 
 
 if __name__ == "__main__":

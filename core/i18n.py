@@ -11,6 +11,11 @@ import json
 from .normalize import norm_team
 
 # 英文標準名 → 繁中
+# ⚠ 耦合警告：providers/tsl.py:_build_short_map() 會「讀取本檔原始碼」並用下方
+#   `# ===== 區段名 =====` 的標題判斷各隊運動別（台灣運彩隊名消歧義用）。
+#   tsl 的 section_sport 對照表認得：MLB / NBA / WNBA / NHL / 冰球 / 國家隊 / 英超…等標題字。
+#   改動下方區段標題的「# ===== X =====」格式或新增運動時，請同步更新 tsl.py 的 section_sport，
+#   否則該區隊伍的運動別會被歸成「?」，跨運動同名簡稱可能配錯隊（無報錯、靜默）。
 _TEAMS_EN = {
     # ===== MLB =====
     "Arizona Diamondbacks": "亞利桑那響尾蛇", "Atlanta Braves": "亞特蘭大勇士",
@@ -91,6 +96,11 @@ _TEAMS_EN = {
     "Sao Paulo": "聖保羅", "Fluminense": "弗魯米嫩塞", "Vasco da Gama": "瓦斯科達伽馬",
     "Internacional": "國際", "Cruzeiro": "克魯塞羅", "Atletico Mineiro": "米內羅競技",
     "Boca Juniors": "博卡青年", "River Plate": "河床",
+    # ===== NHL 冰球（與 BetLedger msaiTeams 一致；其餘隊名走自動翻譯）=====
+    "Carolina Hurricanes": "卡羅萊納颶風", "Colorado Avalanche": "科羅拉多雪崩",
+    "Montreal Canadiens": "蒙特婁加拿大人", "Vegas Golden Knights": "維加斯黃金騎士",
+    "Edmonton Oilers": "愛德蒙頓油人", "Florida Panthers": "佛羅里達黑豹",
+    "Dallas Stars": "達拉斯星", "Toronto Maple Leafs": "多倫多楓葉",
 }
 
 # 英文標準名 → 繁中（聯盟）
@@ -118,6 +128,8 @@ _LEAGUES_EN = {
     "Nippon Professional Baseball": "日本職棒", "Japan Professional Baseball": "日本職棒",
     "NCAA Baseball": "美國大學棒球", "Mexican League": "墨西哥棒球聯盟",
     "Mexican Baseball League": "墨西哥棒球聯盟",
+    # 冰球
+    "NHL": "國家冰球聯賽", "National Hockey League": "國家冰球聯賽", "Hockey": "冰球",
 }
 
 

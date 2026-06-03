@@ -12,7 +12,8 @@ from core.models import MatchOdds, prob_to_decimal, _line_key
 from core.normalize import teams_similar, norm_team
 
 # 各運動「比賽進行中」時長（小時），用來由開賽時間推斷滾球
-_LIVE_WINDOW = {"soccer": 2.8, "basketball": 3.2, "baseball": 3.9}
+# hockey：3 節×20 分 + 2 次節間休息 + 暖身/停表，正規約 2.5h，留延長賽空間抓 3.4h
+_LIVE_WINDOW = {"soccer": 2.8, "basketball": 3.2, "baseball": 3.9, "hockey": 3.4}
 
 
 def _is_live(sport, start_iso):
@@ -31,7 +32,8 @@ BASE = "https://gamma-api.polymarket.com"
 HEADERS = {"user-agent": "Mozilla/5.0", "accept": "application/json"}
 
 # Polymarket tag → sport 標籤（只保留能與其他來源對齊的運動）
-TAG_SPORT = {"soccer": "soccer", "basketball": "basketball", "baseball": "baseball"}
+# NHL 場次 tag 形如 ['Sports','NHL','Games','Hockey']，以 Hockey 對到 hockey
+TAG_SPORT = {"soccer": "soccer", "basketball": "basketball", "baseball": "baseball", "hockey": "hockey"}
 
 
 def _jload(v, default):
@@ -198,7 +200,7 @@ def fetch():
             live=_is_live(sport, start),
             league=next((str(x.get("label")) for x in tags
                          if str(x.get("label", "")).lower() not in
-                         ("games", "sports", "soccer", "basketball", "baseball")), ""),
+                         ("games", "sports", "soccer", "basketball", "baseball", "hockey")), ""),
             home_odds=ho,
             draw_odds=do,
             away_odds=ao,
@@ -211,7 +213,7 @@ def fetch():
     from core.normalize import match_key
     best = {}
     for precise, r in rows:
-        k = (r.sport, match_key(r.home, r.away))
+        k = (r.sport, match_key(r.home, r.away, r.sport))
         if k not in best or (precise and not best[k][0]):
             best[k] = (precise, r)
     out = [r for _, r in best.values()]

@@ -4,6 +4,7 @@
 記錄每個來源的狀態（場數 / ok / error），供前端顯示。
 """
 import os
+import re
 import json
 import time
 import traceback
@@ -12,10 +13,10 @@ from datetime import datetime, timezone, timedelta
 from core.matcher import merge, _priority
 from core import translate
 from core.normalize import match_key, norm_team, teams_similar
-from providers import pinnacle, polymarket, onexbet, tsl, panda, espn_scores, playsport_results
+from providers import pinnacle, polymarket, onexbet, tsl, panda, espn_scores, playsport_results, playsport_live
 
 
-_SCORE_WIN = {"baseball": 4.5, "basketball": 3.5, "soccer": 3.0}
+_SCORE_WIN = {"baseball": 4.5, "basketball": 3.5, "soccer": 3.0, "hockey": 3.4}
 
 
 def _event_started_recently(e, now):
@@ -36,7 +37,7 @@ def _apply_scores(events, scores):
     ESPN 未涵蓋的賽事（足球、KBO/NPB 等）維持原本的 live/比分。"""
     now = datetime.now(timezone.utc)
     for e in events:
-        s = scores.get((e["sport"], match_key(e["home"], e["away"])))
+        s = scores.get((e["sport"], match_key(e["home"], e["away"], e["sport"])))
         if not s:
             continue
         dt = _event_started_recently(e, now)
@@ -59,13 +60,87 @@ def _apply_scores(events, scores):
                 e["score"] = ""
 
 
+def _clear_future_live(events, margin_min=40):
+    """未開賽的場不可能在滾球：清掉「開賽時間明顯在未來(>margin)卻被標 live/有比分」的場。
+    根因：1xbet LiveFeed 的滾球場（自帶比分字串）會被 merge 併到同隊『系列賽』的未來排程場，
+    把進行中那場的比分洩漏到還沒開打的場。ESPN 比分套用有時間窗保護，但 provider 自帶的比分沒有，
+    故在此統一以開賽時間把關（與 _apply_scores 的 now+40min 上界一致）。"""
+    now = datetime.now(timezone.utc)
+    cleared = 0
+    for e in events:
+        if not (e.get("live") or e.get("score")):
+            continue
+        st = e.get("start")
+        if not st:
+            continue
+        try:
+            dt = datetime.fromisoformat(st.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            continue
+        if dt > now + timedelta(minutes=margin_min):
+            e["live"] = False
+            e["score"] = ""
+            cleared += 1
+    if cleared:
+        print(f"[fetch_all] 清掉 {cleared} 場未開賽卻被標 live/比分（同隊系列賽比分洩漏）")
+
+
+def _apply_playsport_live(events, ps_games):
+    """以 playsport 即時比分「優先」覆寫 live 比分（中職/日職/韓職等 ESPN 未涵蓋的聯賽）。
+    在 ESPN 之後套用 → playsport 贏。靠 zh 子字串或英文 token 雙向比對（feed 有時 home_zh 未翻成中文）。"""
+    def _entoks(s):
+        return set(t for t in re.sub(r"[^a-z0-9]+", " ", (s or "").lower()).split() if len(t) >= 3)
+
+    def _side(ev_zh, ev_en, ps_zh, ps_en):
+        ez, ee = (ev_zh or "").strip(), (ev_en or "").strip()
+        pz, pe = (ps_zh or "").strip(), (ps_en or "").strip()
+        if pz and (pz in ez or (ez and ez in pz) or pz in ee or (ee and ee in pz)):
+            return True
+        if pe and (_entoks(ee) & _entoks(pe) or _entoks(ez) & _entoks(pe)):
+            return True
+        return False
+
+    cnt = 0
+    for e in events:
+        for g in ps_games:
+            if g["sport"] != e["sport"]:
+                continue
+            direct = (_side(e.get("home_zh"), e.get("home"), g["home_zh"], g["home_en"])
+                      and _side(e.get("away_zh"), e.get("away"), g["away_zh"], g["away_en"]))
+            swap = (_side(e.get("home_zh"), e.get("home"), g["away_zh"], g["away_en"])
+                    and _side(e.get("away_zh"), e.get("away"), g["home_zh"], g["home_en"]))
+            if not (direct or swap):
+                continue
+            hs, as_ = g["home_score"], g["away_score"]
+            sc = f"{hs}:{as_}" if direct else f"{as_}:{hs}"  # 依 event 主隊方向擺
+            e["live"] = True
+            e["score"] = " · ".join(x for x in [sc, g["status"]] if x)
+            cnt += 1
+            break
+    if cnt:
+        print(f"[playsport_live] 覆寫 {cnt} 場滾球比分（playsport 優先）")
+
+
+_SCORE_RE = re.compile(r"\s*(\d+)\s*[:：]\s*(\d+)")
+
+
+def _attach_numeric_scores(items):
+    """從每筆事件的 score 字串（慣例「主:客 · 進度」）解析出 home_score/away_score 數值欄。
+    讓前端直接讀數值、不必各自用 regex 解析字串方向（過去兩頁各一份解析，且比分對調 bug 難查）。
+    score 字串仍保留（供「· 進度」滾球文字與顯示）。無比分數字者兩欄為 None。"""
+    for e in items:
+        m = _SCORE_RE.match(str(e.get("score") or ""))
+        e["home_score"] = int(m.group(1)) if m else None
+        e["away_score"] = int(m.group(2)) if m else None
+
+
 def _apply_deltas(events, prev_events):
     """為每個賽事/來源/腳計算與「上一次更新」相比的漲跌 %（存成 *_chg）。"""
     prev = {}
     for e in prev_events:
-        prev[(e["sport"], match_key(e["home"], e["away"]))] = e
+        prev[(e["sport"], match_key(e["home"], e["away"], e["sport"]))] = e
     for e in events:
-        rec = prev.get((e["sport"], match_key(e["home"], e["away"])))
+        rec = prev.get((e["sport"], match_key(e["home"], e["away"], e["sport"])))
         swapped = bool(rec) and not teams_similar(norm_team(e["home"]), norm_team(rec["home"]))
         for src, v in e["sources"].items():
             pv = rec["sources"].get(src) if rec else None
@@ -145,8 +220,16 @@ def run_once():
     events = merge(all_rows)
     _apply_deltas(events, prev_events)
     # ESPN 即時比分 + 校正 live 狀態，最後依新狀態重新排序
+    espn_scores_map = {}
     try:
-        _apply_scores(events, espn_scores.fetch_scores())
+        espn_scores_map = espn_scores.fetch_scores()
+        _apply_scores(events, espn_scores_map)
+        # playsport 即時比分「優先」：套在 ESPN 之後覆寫（中職/日職/韓職等的滾球比分＋中文局數）
+        try:
+            _apply_playsport_live(events, playsport_live.fetch_live())
+        except Exception as e:
+            print(f"[playsport_live] 略過: {e}")
+        _clear_future_live(events)
         events.sort(key=lambda e: (_priority(e), not e["live"],
                                    -e["source_count"], e["start"] or "9999"))
     except Exception as e:
@@ -158,6 +241,20 @@ def run_once():
     except Exception as e:
         results = []
         print(f"[playsport_results] 略過: {e}")
+    # ESPN 獨立 live 場次（目前限冰球）：賠率源（Polymarket 依 volume 分頁）間歇漏抓時，
+    # 靠 ESPN 穩定維持滾球場不消失。已在 events 出現的場（賠率源有抓到）就跳過避免重複。
+    try:
+        have = {(e["sport"], match_key(e["home"], e["away"], e["sport"])) for e in events}
+        live_extra = [le for le in espn_scores.live_events_from_scores(espn_scores_map, {"hockey"})
+                      if (le["sport"], match_key(le["home"], le["away"], le["sport"])) not in have]
+        if live_extra:
+            print(f"[espn] 補獨立 live 場 {len(live_extra)} 場（賠率源未涵蓋）")
+        results.extend(live_extra)
+    except Exception as e:
+        print(f"[espn] 獨立 live 場略過: {e}")
+    # 從 score 字串解析出數值比分欄（events + results），供前端直接讀、免各自字串解析
+    _attach_numeric_scores(events)
+    _attach_numeric_scores(results)
     payload = {
         "updated_at": datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         "sources": status,

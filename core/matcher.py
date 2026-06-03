@@ -90,6 +90,8 @@ def _priority(e):
             return 4
         if "韓國職棒" in lz or "kbo" in le or "korea" in le:
             return 5
+    if sport == "hockey" and ("國家冰球" in lz or "冰球" in lz or "nhl" in le):
+        return 6
     if sport == "soccer" and (any(k in lz for k in ("英超", "西甲", "義甲", "德甲", "法甲"))
                               or any(k in le for k in ("premier league", "la liga", "serie a",
                                                        "bundesliga", "ligue 1"))):
