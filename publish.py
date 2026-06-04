@@ -86,7 +86,7 @@ def capture_closings():
         print(f"[closings] 失敗: {ex}")
 
 
-def publish():
+def publish(scores_only=SCORES_ONLY):
     # 0) 先把雲端「上一份」下載成本機 latest.json，run_once 才能算出漲跌%
     #    （GitHub Actions 每次都是全新環境，沒有這步就沒有上一份可比）
     try:
@@ -101,7 +101,7 @@ def publish():
         print(f"[publish] 下載上一份失敗（首次或無檔，略過）: {e}")
 
     # 1) 重新抓資料：高頻分數刷新只重抓 playsport 比分；完整模式才重抓所有 odds 來源＋終場
-    if SCORES_ONLY:
+    if scores_only:
         if fetch_all.refresh_scores_only() is None:
             return False   # 沒有雲端上一份可刷新（首跑），交給完整模式
     else:
@@ -134,5 +134,73 @@ def publish():
     return False
 
 
+def _live_count():
+    """讀本機 latest.json 算現在有幾場 live。"""
+    try:
+        with open(LATEST, encoding="utf-8") as f:
+            return sum(1 for e in json.load(f).get("events", []) if e.get("live"))
+    except Exception:
+        return 0
+
+
+def _activity_from_cloud():
+    """看雲端上一份：是否有 live、是否有場次正在/即將比賽(now−15min ~ now+6h)、距上次更新幾秒。
+    供自適應決定要不要跑這一輪。回傳 (had_live, has_active, age_sec)。"""
+    from datetime import datetime, timezone
+    try:
+        pub = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{OBJECT_PATH}"
+        d = requests.get(pub + f"?t={os.getpid()}", timeout=20).json()
+    except Exception:
+        return (False, True, 99999)   # 讀不到 → 當作要跑（保守）
+    now = datetime.now(timezone.utc)
+    had_live = any(e.get("live") for e in d.get("events", []))
+    has_active = False
+    for e in d.get("events", []):
+        st = e.get("start")
+        if not st:
+            continue
+        try:
+            dt = datetime.fromisoformat(st.replace("Z", "+00:00"))
+        except Exception:
+            continue
+        mins = (dt - now).total_seconds() / 60.0
+        if -360 <= mins <= 15:        # 已開賽 6 小時內 或 15 分內即將開賽 ＝ 該有滾球/即將有
+            has_active = True
+            break
+    try:
+        age = (now - datetime.fromisoformat(d.get("updated_at", "").replace("Z", "+00:00"))).total_seconds()
+    except Exception:
+        age = 99999
+    return (had_live, has_active, age)
+
+
+def adaptive():
+    """自適應頻率：有滾球(或即將開賽)→ 完整跑一次再每 30 秒高頻刷分數約 4 分鐘；
+    完全閒置 → 每 ~10 分鐘才完整跑一次（cron 每 5 分觸發，閒置時隔輪跳過）。"""
+    import time
+    had_live, has_active, age = _activity_from_cloud()
+    # 閒置降頻：沒有 live、沒有正在/即將比賽，且距上次更新不到 ~9.5 分 → 這輪跳過（達成閒置約 10 分）
+    if not had_live and not has_active and age < 9.5 * 60:
+        print(f"[adaptive] 閒置降頻：無 live／無即將開賽，距上次更新 {int(age)}s(<570s) → 跳過此輪")
+        return
+    publish(scores_only=False)                 # 完整跑（賠率＋比分＋終場）並上傳
+    live = _live_count()
+    print(f"[adaptive] 完整跑完成，live={live}")
+    if live <= 0:
+        print("[adaptive] 無滾球 → 不進高頻，等下一輪")
+        return
+    end = time.monotonic() + 240               # 有滾球 → 每 30 秒只刷比分，約 4 分鐘
+    while time.monotonic() < end:
+        time.sleep(30)
+        try:
+            publish(scores_only=True)
+        except Exception as e:                 # noqa: BLE001
+            print(f"[adaptive] 高頻刷新略過: {e}")
+
+
 if __name__ == "__main__":
-    publish()
+    import sys
+    if len(sys.argv) > 1 and sys.argv[1] == "adaptive":
+        adaptive()
+    else:
+        publish()
