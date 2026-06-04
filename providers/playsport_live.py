@@ -11,6 +11,7 @@
 中職（aid=6）等沒有 {gid}_inning 元素，改以每局得分欄 {gid}_as1.._hs1.. 推算局數，
 狀態文字看 {gid}_addinfo（「比賽結束」=終場）。故以 {gid}_aname 為錨點掃所有場。
 """
+import datetime
 import re
 
 import requests
@@ -31,6 +32,13 @@ ALLIANCES = {
 
 # 已結束/未開賽的進度字樣（不是進行中，不採用）
 _DONE = re.compile(r"結束|完場|完賽|未開賽|取消|延賽|保留|PPD", re.I)
+
+# alliance → 聯盟中文（給終場補洞用，供前端 leagueKey 比對）
+_LEAGUE_ZH = {3: "NBA", 7: "WNBA", 4: "足球", 91: "NHL"}
+
+
+def _today_tpe():
+    return datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))).strftime("%Y-%m-%d")
 
 
 def _get(url, tries=2):
@@ -87,7 +95,8 @@ _HOME_SCORE = ["_hs_b", "_hsr", "_hsr_big"]
 _STATUS = ["_inning", "_inning_big"]
 
 
-def _parse(aid, sport, text):
+def _parse(aid, sport, text, want_done=False):
+    """want_done=False 回傳進行中的場；True 回傳已結束的場（終場比分，供非棒球終場補洞）。"""
     doc = LH.fromstring(text)
     en_map = PS_EN.get(aid, {})
     out = []
@@ -105,7 +114,21 @@ def _parse(aid, sport, text):
         # 狀態：優先 _inning/_inning_big；沒有就用每局得分推（中職）。終場/未開賽 → 不算 live
         status = _first(doc, gid, _STATUS)
         addinfo = _txt(doc, gid + "_addinfo")
-        if _DONE.search(status) or _DONE.search(addinfo):
+        is_done = bool(_DONE.search(status) or _DONE.search(addinfo))
+        if want_done:
+            # 只要「已結束且有比分」的場 → 當終場回傳（home:away 字串，供前端對齊／結算）
+            if not is_done:
+                continue
+            out.append({
+                "sport": sport, "alliance": aid,
+                "league_zh": _LEAGUE_ZH.get(aid, ""), "league": _LEAGUE_ZH.get(aid, ""),
+                "home_zh": h_zh, "away_zh": a_zh,
+                "home": en_map.get(h_zh, ""), "away": en_map.get(a_zh, ""),
+                "score": f"{hs}:{as_}",   # home:away
+                "final": True, "live": False, "date": _today_tpe(),
+            })
+            continue
+        if is_done:
             continue
         if not status:
             status = _inning_from_box(doc, gid)
@@ -145,6 +168,21 @@ def fetch_live():
         except Exception as e:  # noqa: BLE001 - 單一聯賽失敗不影響其他
             print(f"[playsport_live] aid={aid} 失敗: {e}")
     print(f"[playsport_live] 即時比分 {len(games)} 場")
+    return games
+
+
+def fetch_finals():
+    """即時比分頁裡『已結束』的非棒球場（NBA/WNBA/足球/冰球）終場比分。
+    playsport_results 只收棒球終場，籃球等一打完 feed 就沒比分→前端卡在滾球中，故在此補洞。"""
+    games = []
+    for aid, sport in ALLIANCES.items():
+        if sport == "baseball":   # 棒球終場走 playsport_results（有日期、含昨天、較完整）
+            continue
+        try:
+            games += _parse(aid, sport, _get(LIVE.format(aid=aid)), want_done=True)
+        except Exception as e:  # noqa: BLE001
+            print(f"[playsport_live] finals aid={aid} 失敗: {e}")
+    print(f"[playsport_live] 終場(非棒球) {len(games)} 場")
     return games
 
 

@@ -236,13 +236,17 @@ def run_once():
         print(f"[playsport_live] 略過: {e}")
     _clear_future_live(events)  # 安全網：未開賽不可能 live
     events.sort(key=lambda e: (_priority(e), not e["live"], -e["source_count"], e["start"] or "9999"))
-    # playsport 終場比分（唯一終場來源）
+    # playsport 終場比分（棒球：gamesData/result；其餘運動：即時頁的已結束場補洞）
     try:
         results = playsport_results.fetch_results()
         print(f"[playsport_results] 終場比分 {len(results)} 場")
     except Exception as e:
         results = []
         print(f"[playsport_results] 略過: {e}")
+    try:
+        results.extend(playsport_live.fetch_finals())   # NBA/WNBA/足球/冰球終場
+    except Exception as e:
+        print(f"[playsport_live] 終場補洞略過: {e}")
     # 從 score 字串解析出數值比分欄（events + results），供前端直接讀
     _attach_numeric_scores(events)
     _attach_numeric_scores(results)
