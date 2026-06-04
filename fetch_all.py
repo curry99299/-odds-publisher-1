@@ -267,5 +267,38 @@ def run_once():
     return payload
 
 
+def refresh_scores_only():
+    """只重抓 playsport 即時比分套到現有快照後重寫；不重打 odds 來源、不重抓終場。
+    供雲端 job 內高頻刷新（每 ~30s）：odds/終場交給每 5 分鐘的完整 run_once，
+    這裡只更新最常變動的 live 比分＋滾球狀態，降低對 playsport 與各 odds 站的負擔。"""
+    try:
+        with open(LATEST, encoding="utf-8") as f:
+            payload = json.load(f)
+    except Exception as e:
+        print(f"[scores_only] 無現有快照可刷新，略過: {e}")
+        return None
+    events = payload.get("events", [])
+    for e in events:           # 先清掉上一份的 live/比分，再由 playsport 重套
+        e["live"] = False
+        e["score"] = ""
+        e.pop("bat_side", None)
+    try:
+        _apply_playsport_live(events, playsport_live.fetch_live())
+    except Exception as e:
+        print(f"[playsport_live] 略過: {e}")
+    _clear_future_live(events)
+    events.sort(key=lambda e: (_priority(e), not e["live"], -e["source_count"], e["start"] or "9999"))
+    _attach_numeric_scores(events)
+    payload["events"] = events  # results（終場）維持上次完整跑的結果
+    payload["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+    tmp = LATEST + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False)
+    os.replace(tmp, LATEST)
+    live_n = sum(1 for e in events if e.get("live"))
+    print(f"[scores_only] 比分刷新完成：{live_n} 場滾球中 / 共 {len(events)} 場")
+    return payload
+
+
 if __name__ == "__main__":
     run_once()

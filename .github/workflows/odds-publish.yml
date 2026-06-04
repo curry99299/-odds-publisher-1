@@ -1,10 +1,16 @@
 name: Publish odds to Supabase
 
-# 每 5 分鐘更新賠率並發布到 Supabase Storage（線上 BetLedger 直接讀取，免重新部署）
+# 每 5 分鐘觸發；每次 job 內先完整抓一次，再每 30 秒只刷 playsport 即時比分約 4 分鐘
+# → 即時比分約每 30 秒更新（賠率/終場仍 5 分鐘一次）。public repo，Actions 分鐘免費無上限。
 on:
   schedule:
     - cron: "*/5 * * * *"
   workflow_dispatch: {}        # 也可在 Actions 頁手動觸發
+
+# 同時只跑一個，避免上一輪未結束又被觸發造成重複上傳
+concurrency:
+  group: odds-publish
+  cancel-in-progress: true
 
 jobs:
   publish:
@@ -15,7 +21,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
-      - name: Fetch & publish odds
+      - name: Fetch & publish odds（完整一次 + 高頻分數刷新）
         env:
           PYTHONPATH: ${{ github.workspace }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -24,4 +30,10 @@ jobs:
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
           ENABLE_TSL: "1"
           ENABLE_PANDA: "0"
-        run: python3 publish.py
+        run: |
+          python3 publish.py                       # 開頭完整抓一次（賠率＋比分＋終場）
+          end=$((SECONDS+240))                      # 之後每 30 秒只刷即時比分，約 4 分鐘
+          while [ $SECONDS -lt $end ]; do
+            sleep 30
+            SCORES_ONLY=1 python3 publish.py || true
+          done

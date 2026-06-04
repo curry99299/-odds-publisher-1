@@ -25,6 +25,8 @@ import fetch_all
 SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://yxpoqdihxnkxcnzebrwv.supabase.co").rstrip("/")
 SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY", "")
 BUCKET = os.environ.get("SUPABASE_BUCKET", "odds")
+# SCORES_ONLY=1：只重抓 playsport 即時比分套到雲端現有快照（高頻刷新用，不重打 odds 來源）
+SCORES_ONLY = os.environ.get("SCORES_ONLY") == "1"
 OBJECT_PATH = "odds/latest.json"
 LATEST = os.path.join(os.path.dirname(__file__), "data", "latest.json")
 
@@ -98,11 +100,14 @@ def publish():
     except Exception as e:
         print(f"[publish] 下載上一份失敗（首次或無檔，略過）: {e}")
 
-    # 1) 重新抓最新賠率（run_once 內會讀上面那份算漲跌）
-    fetch_all.run_once()
-
-    # 1.5) 記錄即將開賽比賽的 Pinnacle 收盤線（供 CLV 分析）
-    capture_closings()
+    # 1) 重新抓資料：高頻分數刷新只重抓 playsport 比分；完整模式才重抓所有 odds 來源＋終場
+    if SCORES_ONLY:
+        if fetch_all.refresh_scores_only() is None:
+            return False   # 沒有雲端上一份可刷新（首跑），交給完整模式
+    else:
+        fetch_all.run_once()      # run_once 內會讀上面那份算漲跌
+        # 1.5) 記錄即將開賽比賽的 Pinnacle 收盤線（供 CLV 分析）
+        capture_closings()
 
     if not SERVICE_KEY:
         print("[publish] 未設定 SUPABASE_SERVICE_KEY，僅更新本機 latest.json（未上傳雲端）")
@@ -118,7 +123,7 @@ def publish():
         "apikey": SERVICE_KEY,
         "Content-Type": "application/json",
         "x-upsert": "true",
-        "cache-control": "max-age=60",
+        "cache-control": "max-age=15",   # 降快取→高頻刷新時前端能更快讀到新比分
     }
     r = requests.post(url, headers=headers, data=body, timeout=30)
     if r.status_code in (200, 201):
