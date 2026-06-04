@@ -101,8 +101,9 @@ def _apply_playsport_live(events, ps_games):
         return False
 
     cnt = 0
+    matched = set()
     for e in events:
-        for g in ps_games:
+        for gi, g in enumerate(ps_games):
             if g["sport"] != e["sport"]:
                 continue
             direct = (_side(e.get("home_zh"), e.get("home"), g["home_zh"], g["home_en"])
@@ -119,10 +120,36 @@ def _apply_playsport_live(events, ps_games):
             gbat = g.get("bat")
             if gbat in ("home", "away"):
                 e["bat_side"] = gbat if direct else ("away" if gbat == "home" else "home")
+            matched.add(gi)
             cnt += 1
             break
     if cnt:
         print(f"[playsport_live] 覆寫 {cnt} 場滾球比分（playsport 優先）")
+    # 對不到任何賠率事件的 playsport live 場（賠率源沒這個對戰）→ 自建獨立 live 事件，
+    # 否則該場的滾球比分沒地方掛、前端完全看不到（如洛磯 vs 天使，賠率源無此對戰）。
+    added = 0
+    for gi, g in enumerate(ps_games):
+        if gi in matched:
+            continue
+        events.append(_standalone_live_event(g))
+        added += 1
+    if added:
+        print(f"[playsport_live] 補獨立 live 場 {added} 場（賠率源未涵蓋此對戰）")
+
+
+def _standalone_live_event(g):
+    """把一場 playsport live 場包成 feed event（賠率源沒有此對戰時用）。主客＝playsport 原方向。"""
+    hs, as_ = g["home_score"], g["away_score"]
+    return {
+        "sport": g["sport"], "league": g.get("league_zh", ""), "league_zh": g.get("league_zh", ""),
+        "home": g.get("home_en") or g["home_zh"], "away": g.get("away_en") or g["away_zh"],
+        "home_zh": g["home_zh"], "away_zh": g["away_zh"],
+        "live": True,
+        "score": " · ".join(x for x in [f"{hs}:{as_}", g.get("status", "")] if x),
+        "bat_side": g["bat"] if g.get("bat") in ("home", "away") else None,
+        "source_count": 0, "sources": {}, "start": None,
+        "has_draw": False, "best": {}, "arb": None,
+    }
 
 
 _SCORE_RE = re.compile(r"\s*(\d+)\s*[:：]\s*(\d+)")

@@ -33,7 +33,9 @@ ALLIANCES = {
 # 已結束/未開賽的進度字樣（不是進行中，不採用）
 _DONE = re.compile(r"結束|完場|完賽|未開賽|取消|延賽|保留|PPD", re.I)
 
-# alliance → 聯盟中文（給終場補洞用，供前端 leagueKey 比對）
+# alliance → 聯盟中文（供前端 leagueKey 比對；終場補洞用非棒球那組）
+_LEAGUE_ZH_ALL = {1: "MLB", 2: "日本職棒", 6: "中華職棒", 9: "韓國職棒",
+                  3: "NBA", 7: "WNBA", 4: "足球", 91: "NHL"}
 _LEAGUE_ZH = {3: "NBA", 7: "WNBA", 4: "足球", 91: "NHL"}
 
 
@@ -146,7 +148,7 @@ def _parse(aid, sport, text, want_done=False):
             elif "局下" in status:
                 bat = "home"
         out.append({
-            "sport": sport, "alliance": aid,
+            "sport": sport, "alliance": aid, "league_zh": _LEAGUE_ZH_ALL.get(aid, ""),
             "home_zh": h_zh, "away_zh": a_zh,
             "home_en": en_map.get(h_zh, ""), "away_en": en_map.get(a_zh, ""),
             "home_score": int(hs), "away_score": int(as_),
