@@ -174,7 +174,7 @@ def fetch_finals():
     playsport_results 只收棒球終場，籃球等一打完 feed 就沒比分→前端卡在滾球中，故在此補洞。"""
     games = []
     for aid, sport in ALLIANCES.items():
-        if sport == "baseball":   # 棒球終場走 playsport_results（有日期、含昨天、較完整）
+        if sport != "soccer":   # 棒球/籃球/冰球終場走 playsport_results（有日期、含歷史）；這裡只補足球
             continue
         try:
             games += _parse(aid, sport, _get(LIVE.format(aid=aid)), want_done=True)

@@ -22,9 +22,12 @@ from lxml import html as LH
 UA = {"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"}
 RESULT = "https://www.playsport.cc/gamesData/result?allianceid={aid}&gametime={date}"
 
-# alliance → (sport, 標準 league_zh)
+# alliance → (sport, 標準 league_zh)。result 頁面各運動結構相同(winnerteam/secondteam+winnerscores)，
+# 故同一 _parse 通用；籃球/冰球隊名為短名，靠前端雙向子字串比對對上注單長名。
 ALLIANCE = {1: ("baseball", "美國職棒大聯盟"), 2: ("baseball", "日本職棒"),
-            6: ("baseball", "中華職棒"), 9: ("baseball", "韓國職棒")}
+            6: ("baseball", "中華職棒"), 9: ("baseball", "韓國職棒"),
+            3: ("basketball", "NBA"), 7: ("basketball", "WNBA"),
+            94: ("basketball", "CBA中國男籃職業聯賽"), 91: ("hockey", "NHL")}
 
 # playsport 短中文隊名 → 英文標準名（按聯盟，因短名跨聯盟同名：樂天=NPB金鷹/KBO Lotte/CPBL桃猿）
 PS_EN = {
