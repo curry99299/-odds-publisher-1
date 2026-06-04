@@ -30,10 +30,6 @@ jobs:
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
           ENABLE_TSL: "1"
           ENABLE_PANDA: "0"
-        run: |
-          python3 publish.py                       # 開頭完整抓一次（賠率＋比分＋終場）
-          end=$((SECONDS+240))                      # 之後每 30 秒只刷即時比分，約 4 分鐘
-          while [ $SECONDS -lt $end ]; do
-            sleep 30
-            SCORES_ONLY=1 python3 publish.py || true
-          done
+        run: python3 publish.py adaptive
+          # adaptive：有滾球(或即將開賽)→ 完整跑+每30秒高頻刷分數約4分鐘；
+          #           完全閒置 → 隔輪跳過，等於每 ~10 分鐘才完整跑一次（cron 仍每 5 分觸發）
