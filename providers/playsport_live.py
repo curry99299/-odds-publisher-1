@@ -114,12 +114,24 @@ def _parse(aid, sport, text):
         trm = _txt(doc, gid + "_trm_big")  # 籃球剩餘時間「06:49」→ 併進狀態「第3節 06:49」
         if trm and "節" in status:
             status = f"{status} {trm}"
+        # 棒球攻守：_showTeam＝目前打擊隊 → 換算成主/客；沒有就用局數上下半推（上=客打、下=主打）
+        bat = ""
+        if sport == "baseball":
+            show = _txt(doc, gid + "_showTeam")
+            if show and show == h_zh:
+                bat = "home"
+            elif show and show == a_zh:
+                bat = "away"
+            elif "局上" in status:
+                bat = "away"
+            elif "局下" in status:
+                bat = "home"
         out.append({
             "sport": sport, "alliance": aid,
             "home_zh": h_zh, "away_zh": a_zh,
             "home_en": en_map.get(h_zh, ""), "away_en": en_map.get(a_zh, ""),
             "home_score": int(hs), "away_score": int(as_),
-            "status": status,
+            "status": status, "bat": bat,   # 'home'|'away'|''＝目前打擊方（棒球）
         })
     return out
 

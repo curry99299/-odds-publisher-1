@@ -115,6 +115,10 @@ def _apply_playsport_live(events, ps_games):
             sc = f"{hs}:{as_}" if direct else f"{as_}:{hs}"  # 依 event 主隊方向擺
             e["live"] = True
             e["score"] = " · ".join(x for x in [sc, g["status"]] if x)
+            # 打擊方：g["bat"] 相對 playsport 主客；swap 時翻面對齊 event 主客
+            gbat = g.get("bat")
+            if gbat in ("home", "away"):
+                e["bat_side"] = gbat if direct else ("away" if gbat == "home" else "home")
             cnt += 1
             break
     if cnt:
