@@ -51,6 +51,15 @@ def _txt(doc, eid):
     return (v or "").strip()
 
 
+def _first(doc, gid, sufs):
+    """依序試多個欄位後綴，回第一個非空值（各聯賽 id 命名不一：棒球 _as_b、籃球 _asr…）。"""
+    for s in sufs:
+        v = _txt(doc, gid + s)
+        if v:
+            return v
+    return ""
+
+
 def _inning_from_box(doc, gid):
     """棒球無 _inning 元素時（中職），用每局得分欄推算當前局數＋上下半。
     取最後一個有得分（任一隊）的局；該局主隊欄已填→局下（主隊進攻中），否則局上。"""
@@ -67,30 +76,44 @@ def _inning_from_box(doc, gid):
     return f"{last}局{'下' if home_filled else '上'}"
 
 
+# 各聯賽欄位命名不一，逐一 fallback：
+#   隊名：_aname/_hname（棒球）、_aname_big/_hname_big、_atn/_htn（籃球主打場）
+#   比分：_as_b/_hs_b（棒球總分）、_asr/_hsr、_asr_big/_hsr_big（籃球總分）
+#   狀態：_inning（棒球）、_inning_big（籃球「第N節」），都沒有就用每局得分推（中職）
+_AWAY_NAME = ["_aname", "_aname_big", "_atn"]
+_HOME_NAME = ["_hname", "_hname_big", "_htn"]
+_AWAY_SCORE = ["_as_b", "_asr", "_asr_big"]
+_HOME_SCORE = ["_hs_b", "_hsr", "_hsr_big"]
+_STATUS = ["_inning", "_inning_big"]
+
+
 def _parse(aid, sport, text):
     doc = LH.fromstring(text)
     en_map = PS_EN.get(aid, {})
     out = []
     seen = set()
-    # 以 _aname 為錨點掃所有場（_inning 不是每個聯賽都有；中職就沒有）
-    for el in doc.xpath('//*[contains(@id,"_aname")]'):
-        gid = el.get("id").replace("_aname", "")
+    # 用 regex 收集所有 gid（數字 id）：_aname/_aname_big 都含「_aname」、籃球另有 _atn
+    gids = set(re.findall(r"(\d+)_aname", text)) | set(re.findall(r"(\d+)_atn", text))
+    for gid in gids:
         if gid in seen:
             continue
         seen.add(gid)
-        a_zh, h_zh = _txt(doc, gid + "_aname"), _txt(doc, gid + "_hname")
-        as_, hs = _txt(doc, gid + "_as_b"), _txt(doc, gid + "_hs_b")
+        a_zh, h_zh = _first(doc, gid, _AWAY_NAME), _first(doc, gid, _HOME_NAME)
+        as_, hs = _first(doc, gid, _AWAY_SCORE), _first(doc, gid, _HOME_SCORE)
         if not a_zh or not h_zh or not hs.isdigit() or not as_.isdigit():
             continue
-        # 狀態：優先 _inning 元素；沒有就用每局得分推（中職）。終場/未開賽 → 不算 live
-        status = _txt(doc, gid + "_inning")
+        # 狀態：優先 _inning/_inning_big；沒有就用每局得分推（中職）。終場/未開賽 → 不算 live
+        status = _first(doc, gid, _STATUS)
         addinfo = _txt(doc, gid + "_addinfo")
         if _DONE.search(status) or _DONE.search(addinfo):
             continue
         if not status:
             status = _inning_from_box(doc, gid)
-        if not status:  # 無局數可推 = 多半未開賽
+        if not status:  # 無局數/節數可推 = 多半未開賽
             continue
+        trm = _txt(doc, gid + "_trm_big")  # 籃球剩餘時間「06:49」→ 併進狀態「第3節 06:49」
+        if trm and "節" in status:
+            status = f"{status} {trm}"
         out.append({
             "sport": sport, "alliance": aid,
             "home_zh": h_zh, "away_zh": a_zh,
