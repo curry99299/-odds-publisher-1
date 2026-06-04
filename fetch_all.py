@@ -100,9 +100,24 @@ def _apply_playsport_live(events, ps_games):
             return True
         return False
 
+    now = datetime.now(timezone.utc)
+
+    def _is_future(e):
+        """事件開賽是否明顯在未來(>40min)：系列賽同隊明天的場，不可掛今天的 live 比分。"""
+        st = e.get("start")
+        if not st:
+            return False
+        try:
+            dt = datetime.fromisoformat(st.replace("Z", "+00:00"))
+        except (ValueError, AttributeError):
+            return False
+        return dt > now + timedelta(minutes=40)
+
     cnt = 0
     matched = set()
     for e in events:
+        if _is_future(e):   # 未來場不掛 live → 該 live 場留作 unmatched，下面補成獨立事件
+            continue
         for gi, g in enumerate(ps_games):
             if g["sport"] != e["sport"]:
                 continue
