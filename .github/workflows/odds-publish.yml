@@ -30,6 +30,6 @@ jobs:
           PERPLEXITY_API_KEY: ${{ secrets.PERPLEXITY_API_KEY }}
           ENABLE_TSL: "1"
           ENABLE_PANDA: "0"
+        # adaptive：有滾球(或即將開賽)→ 完整跑+每30秒高頻刷分數約4分鐘；
+        #           完全閒置 → 隔輪跳過，等於每 ~10 分鐘才完整跑一次（cron 仍每 5 分觸發）
         run: python3 publish.py adaptive
-          # adaptive：有滾球(或即將開賽)→ 完整跑+每30秒高頻刷分數約4分鐘；
-          #           完全閒置 → 隔輪跳過，等於每 ~10 分鐘才完整跑一次（cron 仍每 5 分觸發）
