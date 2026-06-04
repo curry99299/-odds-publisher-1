@@ -63,17 +63,28 @@ def _parse(aid, text, date_iso):
         if not info:
             continue
         info = info[0]
-        away_zh = _txt((info.xpath('.//td[contains(@class,"secondteam")]//a') or [None])[0])
-        home_zh = _txt((info.xpath('.//td[contains(@class,"winnerteam")]//a') or [None])[0])
-        # 比分必須靠 class 對齊，不能靠 li 順序：winnerteam(贏家)配 <li class="winnerscores">，
-        # secondteam(輸家)配另一個數字 li。winnerscores 在 ul 內的位置會隨贏家上/下排而變，
-        # 用位置取值會把兩隊分數對調、導致輸贏算反（已踩坑）。
         score_lis = info.xpath('.//td[contains(@class,"scores")]//li[not(contains(@class,"vsicon"))]')
-        win_num = next((_txt(li) for li in score_lis if "winnerscores" in (li.get("class") or "")), "")
-        lose_num = next((_txt(li) for li in score_lis if "winnerscores" not in (li.get("class") or "")), "")
-        if not away_zh or not home_zh or not win_num.isdigit() or not lose_num.isdigit():
-            continue
-        home_score, away_score = int(win_num), int(lose_num)   # home_zh=winnerteam→winnerscores
+        win_teams = info.xpath('.//td[contains(@class,"winnerteam")]//a')
+        second_teams = info.xpath('.//td[contains(@class,"secondteam")]//a')
+        if win_teams:
+            # 一般場（有勝負）：比分必須靠 class 對齊，不能靠 li 順序——winnerteam(贏家)配 <li class="winnerscores">，
+            # secondteam(輸家)配另一個數字 li。winnerscores 在 ul 內的位置會隨贏家上/下排而變，
+            # 用位置取值會把兩隊分數對調、導致輸贏算反（已踩坑）。
+            home_zh = _txt(win_teams[0])
+            away_zh = _txt(second_teams[0]) if second_teams else ""
+            win_num = next((_txt(li) for li in score_lis if "winnerscores" in (li.get("class") or "")), "")
+            lose_num = next((_txt(li) for li in score_lis if "winnerscores" not in (li.get("class") or "")), "")
+            if not away_zh or not home_zh or not win_num.isdigit() or not lose_num.isdigit():
+                continue
+            home_score, away_score = int(win_num), int(lose_num)   # home_zh=winnerteam→winnerscores
+        else:
+            # 平手場（和局）：無 winnerteam，兩隊皆 secondteam，比分為兩個普通 li（無 winnerscores），
+            # 靠位置對齊即可——和局兩隊分數相等，順序對調也不會錯。漏抓和局會讓該注單卡「待結算」（已踩坑：KBO 3:3）。
+            nums = [_txt(li) for li in score_lis]
+            if len(second_teams) < 2 or len(nums) < 2 or not nums[0].isdigit() or not nums[1].isdigit():
+                continue
+            home_zh, away_zh = _txt(second_teams[0]), _txt(second_teams[1])
+            home_score, away_score = int(nums[0]), int(nums[1])
         out.append({
             "sport": sport, "league": league_zh, "league_zh": league_zh,
             "away_zh": away_zh, "home_zh": home_zh,
