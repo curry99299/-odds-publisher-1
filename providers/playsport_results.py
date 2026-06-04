@@ -82,11 +82,12 @@ def _parse(aid, text, date_iso):
     return out
 
 
-def fetch_results():
-    """抓今天 + 昨天（台灣日期）的終場比分，回傳合併 list。單一聯盟/日期失敗不影響其他。"""
+def fetch_results(days=2):
+    """抓近 days 天（台灣日期，含今天）的終場比分，回傳合併 list。單一聯盟/日期失敗不影響其他。
+    days：高頻刷新用 2（輕量）；完整跑用較大值（如 8）補歷史場，讓過去預測能結算。"""
     tz = datetime.timezone(datetime.timedelta(hours=8))
     today = datetime.datetime.now(tz).date()
-    dates = [today.strftime("%Y%m%d"), (today - datetime.timedelta(days=1)).strftime("%Y%m%d")]
+    dates = [(today - datetime.timedelta(days=i)).strftime("%Y%m%d") for i in range(max(1, days))]
     seen, out = set(), []
     for aid in ALLIANCE:
         for date in dates:

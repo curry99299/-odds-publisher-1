@@ -279,9 +279,10 @@ def run_once():
     _clear_future_live(events)  # 安全網：未開賽不可能 live
     events.sort(key=lambda e: (_priority(e), not e["live"], -e["source_count"], e["start"] or "9999"))
     # playsport 終場比分（棒球：gamesData/result；其餘運動：即時頁的已結束場補洞）
+    # 完整跑抓近 8 天，補歷史終場 → 過去預測（2 天前的場）也能用 playsport 結算
     try:
-        results = playsport_results.fetch_results()
-        print(f"[playsport_results] 終場比分 {len(results)} 場")
+        results = playsport_results.fetch_results(days=8)
+        print(f"[playsport_results] 終場比分 {len(results)} 場（近 8 天）")
     except Exception as e:
         results = []
         print(f"[playsport_results] 略過: {e}")
@@ -330,10 +331,14 @@ def refresh_scores_only():
         print(f"[playsport_live] 略過: {e}")
     _clear_future_live(events)
     events.sort(key=lambda e: (_priority(e), not e["live"], -e["source_count"], e["start"] or "9999"))
-    # 終場也一起刷：剛結束的場 30 秒內就有終場比分，三種玩法才會一致校正（不必等 5 分鐘完整跑）
+    # 終場也一起刷：剛結束的場 30 秒內就有終場。只抓近 2 天保持輕量，與既有 results 合併
+    # （完整跑抓的 8 天歷史不能被高頻洗掉）→ 同 key 用新值、舊歷史保留。
     try:
-        results = playsport_results.fetch_results()
-        results.extend(playsport_live.fetch_finals())
+        fresh = playsport_results.fetch_results(days=2) + playsport_live.fetch_finals()
+        rmap = {}
+        for r in payload.get("results", []) + fresh:   # fresh 在後 → 覆蓋同 key 舊值
+            rmap[(r.get("date"), r.get("league_zh"), r.get("home_zh"), r.get("away_zh"))] = r
+        results = list(rmap.values())
     except Exception as e:
         results = payload.get("results", [])
         print(f"[scores_only] 終場略過（沿用上一份）: {e}")
