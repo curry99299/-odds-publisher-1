@@ -137,15 +137,11 @@ def _parse(aid, sport, text, want_done=False):
         trm = _txt(doc, gid + "_trm_big")  # 籃球剩餘時間「06:49」→ 併進狀態「第3節 06:49」
         if trm and "節" in status:
             status = f"{status} {trm}"
-        # 棒球攻守：_showTeam＝目前打擊隊 → 換算成主/客；沒有就用局數上下半推（上=客打、下=主打）
+        # 棒球攻守：用局數上下半判定（棒球鐵則：局上＝客隊打、局下＝主隊打）。
+        # 注意 _showTeam 不可靠（實測 8 局上卻回傳主隊），故不採用。
         bat = ""
         if sport == "baseball":
-            show = _txt(doc, gid + "_showTeam")
-            if show and show == h_zh:
-                bat = "home"
-            elif show and show == a_zh:
-                bat = "away"
-            elif "局上" in status:
+            if "局上" in status:
                 bat = "away"
             elif "局下" in status:
                 bat = "home"

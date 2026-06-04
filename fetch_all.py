@@ -288,8 +288,17 @@ def refresh_scores_only():
         print(f"[playsport_live] 略過: {e}")
     _clear_future_live(events)
     events.sort(key=lambda e: (_priority(e), not e["live"], -e["source_count"], e["start"] or "9999"))
+    # 終場也一起刷：剛結束的場 30 秒內就有終場比分，三種玩法才會一致校正（不必等 5 分鐘完整跑）
+    try:
+        results = playsport_results.fetch_results()
+        results.extend(playsport_live.fetch_finals())
+    except Exception as e:
+        results = payload.get("results", [])
+        print(f"[scores_only] 終場略過（沿用上一份）: {e}")
     _attach_numeric_scores(events)
-    payload["events"] = events  # results（終場）維持上次完整跑的結果
+    _attach_numeric_scores(results)
+    payload["events"] = events
+    payload["results"] = results
     payload["updated_at"] = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     tmp = LATEST + ".tmp"
     with open(tmp, "w", encoding="utf-8") as f:
