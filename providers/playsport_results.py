@@ -53,12 +53,14 @@ def _txt(el):
     return el.text_content().strip() if el is not None else ""
 
 
-def _parse(aid, text, date_iso):
+def _parse(aid, text, date_iso, mark_ppd=False):
     sport, league_zh = ALLIANCE[aid]
     en_map = PS_EN.get(aid, {})
     doc = LH.fromstring(text)
     out = []
+    pend = {}   # gameid → [隊名…]：無比分列（過去日期時組成「延期」場）
     for tr in doc.xpath("//tr[@gameid]"):
+        gid = tr.get("gameid") or ""
         info = tr.xpath('.//td[contains(@class,"td-teaminfo")]')
         if not info:
             continue
@@ -75,6 +77,7 @@ def _parse(aid, text, date_iso):
             win_num = next((_txt(li) for li in score_lis if "winnerscores" in (li.get("class") or "")), "")
             lose_num = next((_txt(li) for li in score_lis if "winnerscores" not in (li.get("class") or "")), "")
             if not away_zh or not home_zh or not win_num.isdigit() or not lose_num.isdigit():
+                _note_pend(pend, gid, info)
                 continue
             home_score, away_score = int(win_num), int(lose_num)   # home_zh=winnerteam→winnerscores
         else:
@@ -82,6 +85,7 @@ def _parse(aid, text, date_iso):
             # 靠位置對齊即可——和局兩隊分數相等，順序對調也不會錯。漏抓和局會讓該注單卡「待結算」（已踩坑：KBO 3:3）。
             nums = [_txt(li) for li in score_lis]
             if len(second_teams) < 2 or len(nums) < 2 or not nums[0].isdigit() or not nums[1].isdigit():
+                _note_pend(pend, gid, info)
                 continue
             home_zh, away_zh = _txt(second_teams[0]), _txt(second_teams[1])
             home_score, away_score = int(nums[0]), int(nums[1])
@@ -93,7 +97,30 @@ def _parse(aid, text, date_iso):
             "date": date_iso,   # 台灣日期 YYYY-MM-DD（供前端日期比對，避免系列賽前一天結果套到今天）
             "live": False, "final": True,
         })
+    # 過去日期仍無比分的場 = 延期/取消（playsport 結果頁延期場只剩盤口欄、無 winnerteam/比分）。
+    # 以 status='postponed' 進 results，讓前端把「待結算」改成「延期」。當天不標（可能只是未開打）。
+    if mark_ppd:
+        for g_teams in pend.values():
+            if len(g_teams) < 2:
+                continue
+            away_zh, home_zh = g_teams[0], g_teams[1]   # playsport 列序：客隊列在前、主隊列在後
+            out.append({
+                "sport": sport, "league": league_zh, "league_zh": league_zh,
+                "away_zh": away_zh, "home_zh": home_zh,
+                "away": en_map.get(away_zh, away_zh), "home": en_map.get(home_zh, home_zh),
+                "score": "", "date": date_iso, "live": False, "final": False,
+                "status": "postponed",
+            })
     return out
+
+
+def _note_pend(pend, gid, info):
+    """記下無比分列的隊名（td-teaminfo 文字「隊名 先發投手」→ 取第一個 token）。"""
+    if not gid:
+        return
+    toks = _txt(info).split()
+    if toks:
+        pend.setdefault(gid, []).append(toks[0])
 
 
 def fetch_results(days=2):
@@ -109,7 +136,7 @@ def fetch_results(days=2):
             try:
                 r = requests.get(RESULT.format(aid=aid, date=date), headers=UA, timeout=20)
                 r.raise_for_status()
-                for g in _parse(aid, r.text, date_iso):
+                for g in _parse(aid, r.text, date_iso, mark_ppd=(date != dates[0])):
                     key = (g["league_zh"], g["home_zh"], g["away_zh"], g["date"])  # 含日期：系列賽同隊不同天各留一筆
                     if key in seen:
                         continue
