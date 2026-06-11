@@ -32,6 +32,7 @@ ALLIANCES = {
 
 # 已結束/未開賽的進度字樣（不是進行中，不採用）
 _DONE = re.compile(r"結束|完場|完賽|未開賽|取消|延賽|保留|PPD", re.I)
+_PPD = re.compile(r"延賽|延期|取消|PPD", re.I)  # 延期/取消（保留=暫停可能續打，不標）
 
 # alliance → 聯盟中文（供前端 leagueKey 比對；終場補洞用非棒球那組）
 _LEAGUE_ZH_ALL = {1: "MLB", 2: "日本職棒", 6: "中華職棒", 9: "韓國職棒",
@@ -111,7 +112,23 @@ def _parse(aid, sport, text, want_done=False):
         seen.add(gid)
         a_zh, h_zh = _first(doc, gid, _AWAY_NAME), _first(doc, gid, _HOME_NAME)
         as_, hs = _first(doc, gid, _AWAY_SCORE), _first(doc, gid, _HOME_SCORE)
-        if not a_zh or not h_zh or not hs.isdigit() or not as_.isdigit():
+        if not a_zh or not h_zh:
+            continue
+        # 延賽/取消（無比分也抓得到）：want_done 流（→ results）回傳 status='postponed'，當天即可標延期
+        _st0 = _first(doc, gid, _STATUS)
+        _ad0 = _txt(doc, gid + "_addinfo")
+        if _PPD.search(_st0) or _PPD.search(_ad0):
+            if want_done:
+                out.append({
+                    "sport": sport, "alliance": aid,
+                    "league_zh": _LEAGUE_ZH.get(aid, ""), "league": _LEAGUE_ZH.get(aid, ""),
+                    "home_zh": h_zh, "away_zh": a_zh,
+                    "home": en_map.get(h_zh, ""), "away": en_map.get(a_zh, ""),
+                    "score": "", "final": False, "live": False, "date": _today_tpe(),
+                    "status": "postponed",
+                })
+            continue
+        if not hs.isdigit() or not as_.isdigit():
             continue
         # 狀態：優先 _inning/_inning_big；沒有就用每局得分推（中職）。終場/未開賽 → 不算 live
         status = _first(doc, gid, _STATUS)
