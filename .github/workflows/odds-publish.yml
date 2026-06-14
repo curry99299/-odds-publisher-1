@@ -21,6 +21,14 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r requirements.txt
+      # 先發布台灣運彩盤（Playsport）：搭這條每 5 分鐘可靠的外部觸發，避開 GitHub 內建 schedule 不準的問題。
+      # 放在 adaptive(長步驟、常被 cancel-in-progress 取消)之前，確保每輪都能跑完。
+      - name: Publish Playsport odds（台灣運彩盤 → odds/playsport/latest.json）
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_BUCKET: odds
+        run: python3 playsport_publish.py
       - name: Fetch & publish odds（完整一次 + 高頻分數刷新）
         env:
           PYTHONPATH: ${{ github.workspace }}
