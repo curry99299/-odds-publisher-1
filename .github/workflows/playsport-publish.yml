@@ -1,0 +1,28 @@
+name: Publish Playsport odds to Supabase
+
+# 每 10 分鐘抓台灣運彩盤（Playsport）→ 發布 odds/playsport/latest.json
+# 供 BetLedger 建單的「台灣運彩盤」帶入真實小數賠率（獨贏/讓分/大小）。
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+concurrency:
+  group: playsport-publish
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r requirements.txt
+      - name: Fetch & publish Playsport odds
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_BUCKET: odds
+        run: python3 playsport_publish.py
