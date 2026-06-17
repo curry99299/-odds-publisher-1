@@ -30,11 +30,16 @@ SCORES_ONLY = os.environ.get("SCORES_ONLY") == "1"
 OBJECT_PATH = "odds/latest.json"
 LATEST = os.path.join(os.path.dirname(__file__), "data", "latest.json")
 
+# 收盤線改寫 Firestore（取代 Supabase）：透過 BetLedger 加密 ingest API，用共用密鑰。
+# 結尾斜線必留（網站 trailingSlash）。INGEST_SECRET 設成 GitHub Actions repo secret。
+INGEST_URL = os.environ.get("INGEST_URL", "https://of-site-26-156852458247.asia-east1.run.app/api/ingest/")
+INGEST_SECRET = os.environ.get("INGEST_SECRET", "")
+
 
 def capture_closings():
-    """開賽前(約 0~13 分內)把 Pinnacle 獨贏賠率記成『收盤線』，upsert 到 closing_lines。
+    """開賽前(約 0~13 分內)把 Pinnacle 獨贏賠率記成『收盤線』，upsert 到 Firestore closing_lines。
     每 5 分跑一次→開賽前最後一次快照即為收盤線（同場 upsert 覆寫，最接近開賽者勝出）。"""
-    if not SERVICE_KEY:
+    if not INGEST_SECRET:
         return
     try:
         with open(LATEST, encoding="utf-8") as f:
@@ -57,30 +62,37 @@ def capture_closings():
         pin = (e.get("sources") or {}).get("pinnacle")
         if not pin or not (pin.get("home") or pin.get("away")):
             continue
+        sport = e.get("sport")
+        home = e.get("home_zh") or e.get("home")
+        away = e.get("away_zh") or e.get("away")
+        match_date = start[:10]
+        # doc id ＝ 原 Supabase 複合鍵 (sport,home,away,match_date)，確保同場覆寫（取代 on_conflict）。
+        doc_id = "|".join(str(x or "") for x in (sport, home, away, match_date)).replace("/", "_")
         rows.append({
-            "sport": e.get("sport"),
-            "home": e.get("home_zh") or e.get("home"),
-            "away": e.get("away_zh") or e.get("away"),
+            "id": doc_id,
+            "sport": sport,
+            "home": home,
+            "away": away,
             "home_raw": e.get("home"),
             "away_raw": e.get("away"),
             "league": e.get("league_zh") or e.get("league"),
             "start": start,
-            "match_date": start[:10],
+            "match_date": match_date,
             "p_home": pin.get("home"),
             "p_draw": pin.get("draw"),
             "p_away": pin.get("away"),
             "captured_at": now.isoformat(),
+            "updated_at": now.isoformat(),  # 與 captured_at 同值，留作將來 delete-stale 清理依據
         })
     if not rows:
         return
-    url = f"{SUPABASE_URL}/rest/v1/closing_lines?on_conflict=sport,home,away,match_date"
-    headers = {
-        "Authorization": f"Bearer {SERVICE_KEY}", "apikey": SERVICE_KEY,
-        "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates",
-    }
     try:
-        r = requests.post(url, headers=headers, json=rows, timeout=30)
-        print(f"[closings] 記錄 {len(rows)} 場收盤線 http={r.status_code}"
+        r = requests.post(
+            INGEST_URL,
+            json={"secret": INGEST_SECRET, "op": "upsert", "table": "closing_lines", "rows": rows},
+            timeout=30,
+        )
+        print(f"[closings] 記錄 {len(rows)} 場收盤線 (Firestore) http={r.status_code}"
               + ("" if r.ok else f" {r.text[:200]}"))
     except Exception as ex:
         print(f"[closings] 失敗: {ex}")
