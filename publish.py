@@ -28,6 +28,7 @@ BUCKET = os.environ.get("SUPABASE_BUCKET", "odds")
 # SCORES_ONLY=1：只重抓 playsport 即時比分套到雲端現有快照（高頻刷新用，不重打 odds 來源）
 SCORES_ONLY = os.environ.get("SCORES_ONLY") == "1"
 OBJECT_PATH = "odds/latest.json"
+PIN_OBJECT = "odds/pinnacle.json"   # Pinnacle 去水推薦（open/locked/events；自帶狀態，bet-tracker 公開讀取）
 LATEST = os.path.join(os.path.dirname(__file__), "data", "latest.json")
 
 # 收盤線改寫 Firestore（取代 Supabase）：透過 BetLedger 加密 ingest API，用共用密鑰。
@@ -98,6 +99,38 @@ def capture_closings():
         print(f"[closings] 失敗: {ex}")
 
 
+def publish_pinnacle():
+    """Pinnacle 去水推薦：讀 latest.json → 取上一份 pinnacle.json 當狀態 → 算 open/locked/結算 → 覆寫上傳。"""
+    import pinnacle_picks
+    try:
+        with open(LATEST, encoding="utf-8") as f:
+            data = json.load(f)
+    except Exception as e:
+        print(f"[pinnacle] 讀 latest.json 失敗: {e}")
+        return
+    prev = {}
+    try:
+        pub = f"{SUPABASE_URL}/storage/v1/object/public/{BUCKET}/{PIN_OBJECT}"
+        r = requests.get(pub + f"?t={os.getpid()}", timeout=20)
+        if r.status_code == 200 and r.content:
+            prev = r.json()
+    except Exception as e:
+        print(f"[pinnacle] 下載上一份失敗（首次或無檔，略過）: {e}")
+    out = pinnacle_picks.build(data.get("events", []), data.get("results", []), prev)
+    body = json.dumps(out, ensure_ascii=False).encode("utf-8")
+    if not SERVICE_KEY:
+        print(f"[pinnacle] 未設 SERVICE_KEY，僅計算 open {len(out['open'])}/locked {len(out['locked'])}，未上傳")
+        return
+    url = f"{SUPABASE_URL}/storage/v1/object/{BUCKET}/{PIN_OBJECT}"
+    headers = {"Authorization": f"Bearer {SERVICE_KEY}", "apikey": SERVICE_KEY, "Content-Type": "application/json", "x-upsert": "true", "cache-control": "max-age=60"}
+    try:
+        r = requests.post(url, headers=headers, data=body, timeout=30)
+        print(f"[pinnacle] open {len(out['open'])} / locked {len(out['locked'])} / events {len(out['events'])} → http={r.status_code}"
+              + ("" if r.ok else f" {r.text[:200]}"))
+    except Exception as ex:
+        print(f"[pinnacle] 上傳失敗: {ex}")
+
+
 def publish(scores_only=SCORES_ONLY):
     # 0) 先把雲端「上一份」下載成本機 latest.json，run_once 才能算出漲跌%
     #    （GitHub Actions 每次都是全新環境，沒有這步就沒有上一份可比）
@@ -120,6 +153,8 @@ def publish(scores_only=SCORES_ONLY):
         fetch_all.run_once()      # run_once 內會讀上面那份算漲跌
         # 1.5) 記錄即將開賽比賽的 Pinnacle 收盤線（供 CLV 分析）
         capture_closings()
+        # 1.6) Pinnacle 去水推薦（open/locked/結算）→ odds/pinnacle.json
+        publish_pinnacle()
 
     if not SERVICE_KEY:
         print("[publish] 未設定 SUPABASE_SERVICE_KEY，僅更新本機 latest.json（未上傳雲端）")
