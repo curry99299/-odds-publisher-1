@@ -19,6 +19,13 @@ LOCKED_KEEP_MS = 7 * 24 * 3600 * 1000   # locked 保留 7 天
 EVENT_KEEP_MS = 24 * 3600 * 1000        # 異動保留 24 小時
 
 
+WIN_BOOST = 2  # 去水勝率全體 +2%（上限 100）；EV 由前端以 (勝率×賠率−1) 自動重算
+
+
+def _win(prob):
+    return min(100, round(prob * 100) + WIN_BOOST)
+
+
 def _devig(odds):
     if not odds or any((not o) or o <= 1 for o in odds):
         return None
@@ -103,7 +110,7 @@ def _candidate(e, market):
         else:
             outs = [("home", p[0], _best(bst.get("home"))), ("away", p[1], _best(bst.get("away")))]
         side, prob, (book, odds) = max(outs, key=lambda x: x[1])
-        return {**base, "side": side, "line": None, "win": round(prob * 100), "odds": odds, "book": book}
+        return {**base, "side": side, "line": None, "win": _win(prob), "odds": odds, "book": book}
     if market == "sp":
         lines = []
         for s in (e.get("spread") or []):
@@ -121,7 +128,7 @@ def _candidate(e, market):
         except Exception:
             n = 0.0
         return {**base, "side": "home" if home_fav else "away", "line": (n if home_fav else -n),
-                "win": round(max(p[0], p[1]) * 100), "odds": (ba if home_fav else bb)[1], "book": (ba if home_fav else bb)[0]}
+                "win": _win(max(p[0], p[1])), "odds": (ba if home_fav else bb)[1], "book": (ba if home_fav else bb)[0]}
     if market == "uo":
         lines = []
         for t in (e.get("total") or []):
@@ -139,7 +146,7 @@ def _candidate(e, market):
         except Exception:
             n = None
         return {**base, "side": "over" if over_fav else "under", "line": n,
-                "win": round(max(p[0], p[1]) * 100), "odds": (bo if over_fav else bu)[1], "book": (bo if over_fav else bu)[0]}
+                "win": _win(max(p[0], p[1])), "odds": (bo if over_fav else bu)[1], "book": (bo if over_fav else bu)[0]}
     return None
 
 
