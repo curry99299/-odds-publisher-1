@@ -196,15 +196,24 @@ def _build_parlays(open_out):
     ev = lambda p: p["win"] / 100.0 * p["odds"] - 1
     game = lambda p: (p["home_zh"], p["away_zh"], p["start"])
     VAL_WIN_FLOOR = 50  # 價值串每腳勝率下限：避免疊一堆冷門變成超低命中的樂透
-    best_ev, best_win = {}, {}  # 每場代表腳
-    for p in legs_ok:
-        g = game(p)
-        if p["win"] >= VAL_WIN_FLOOR and (g not in best_ev or ev(p) > ev(best_ev[g])):
-            best_ev[g] = p
-        if g not in best_win or p["win"] > best_win[g]["win"]:
-            best_win[g] = p
-    val_pool = sorted(best_ev.values(), key=lambda p: -ev(p))      # 價值：勝率≥50% 中 EV 最高
-    safe_pool = sorted(best_win.values(), key=lambda p: -p["win"])  # 穩膽：勝率高
+    # 腳池含所有盤口(讓分/大小也算)；不先取每場代表腳，組串時才限「不同場」→ 讓分/大小有機會進串
+    val_pool = sorted([p for p in legs_ok if p["win"] >= VAL_WIN_FLOOR], key=lambda p: -ev(p))  # 價值：勝率≥50 中 EV 高
+    safe_pool = sorted(legs_ok, key=lambda p: -p["win"])  # 穩膽：勝率高
+
+    def take(pool, count):
+        # 優先「不同場 + 不同盤口」(讓分/大小都進得來,不會整串都獨贏)；湊不滿再放寬成只「不同場」
+        for diverse in (True, False):
+            legs, used_g, used_m = [], set(), set()
+            for p in pool:
+                g = game(p)
+                if g in used_g:
+                    continue  # 同場只取一腳(避免相關性)
+                if diverse and p["market"] in used_m:
+                    continue  # 同盤口不重複(保證多樣)
+                used_g.add(g); used_m.add(p["market"]); legs.append(p)
+                if len(legs) == count:
+                    return legs
+        return None
 
     def mk(legs, plan, stars, strat):
         import functools
@@ -219,19 +228,10 @@ def _build_parlays(open_out):
         }
 
     out = []
-    seen_sets = set()
     def add(pool, count, plan, stars, strat):
-        # 取前 count 腳；若與已加入的串腳組完全相同則往後挪一腳避免重複
-        for shift in range(0, max(1, len(pool) - count + 1)):
-            legs = pool[shift:shift + count]
-            if len(legs) < count:
-                return
-            key = frozenset(l["id"] for l in legs)
-            if key in seen_sets:
-                continue
-            seen_sets.add(key)
+        legs = take(pool, count)
+        if legs:
             out.append(mk(legs, plan, stars, strat))
-            return
 
     # 標準 2串：價值 + 穩膽
     add(val_pool, 2, "standard", 2, "價值2串")
