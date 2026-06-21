@@ -5,6 +5,7 @@
   2. /sports/{id}/markets/straight  → 賠率（依 matchupId join）
 """
 import datetime
+import re
 import requests
 from core.models import MatchOdds, american_to_decimal, _line_key
 
@@ -84,6 +85,40 @@ def fetch():
                     side = dz if dz in ("over", "under") else ("over" if i == 0 else "under")
                     totals_by_id.setdefault(mid, {}).setdefault(_line_key(pts), {})[side] = american_to_decimal(p.get("price"))
 
+        # 正確比分（僅足球）：special.description == "Correct Score"（全場）。
+        # matchups 已含 special、markets/straight 已含其賠率(prices 用 participantId)，不必多打 API。
+        cs_by_parent = {}
+        if sport == "soccer":
+            cs_specials = {}  # special_matchup_id -> (parent_id, {participantId: 比分名稱})
+            for mu in matchups:
+                sp = mu.get("special") or {}
+                if mu.get("type") == "special" and sp.get("description") == "Correct Score":
+                    par = mu.get("parent")
+                    pid = par.get("id") if isinstance(par, dict) else par
+                    pmap = {p.get("id"): p.get("name") for p in (mu.get("participants") or [])}
+                    cs_specials[mu.get("id")] = (pid, pmap)
+            for m in markets:
+                mid = m.get("matchupId")
+                if mid not in cs_specials or m.get("period") != 0:
+                    continue
+                parent_id, pmap = cs_specials[mid]
+                scores = {}
+                for pr in m.get("prices", []):
+                    name = pmap.get(pr.get("participantId"))
+                    price = pr.get("price")
+                    if not name or price is None:
+                        continue
+                    parts2 = name.rsplit(",", 1)  # "{主} h, {客} a"
+                    if len(parts2) != 2:
+                        continue
+                    mh = re.search(r"(\d+)\s*$", parts2[0])
+                    ma = re.search(r"(\d+)\s*$", parts2[1])
+                    if not mh or not ma:
+                        continue
+                    scores[f"{mh.group(1)}-{ma.group(1)}"] = american_to_decimal(price)
+                if scores:
+                    cs_by_parent[parent_id] = scores
+
         for mu in matchups:
             if mu.get("parent") is not None:
                 continue  # 只要主賽事，跳過衍生盤
@@ -108,6 +143,7 @@ def fetch():
                 else bool(mu.get("isLive")),
                 spreads=spreads_by_id.get(mu.get("id")) or {},
                 totals=totals_by_id.get(mu.get("id")) or {},
+                cs=cs_by_parent.get(mu.get("id")) or {},
             ))
     print(f"[pinnacle] 取得 {len(rows)} 場")
     return rows

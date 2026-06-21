@@ -171,6 +171,19 @@ def _candidate(e, market):
         return {**base, "side": "over" if over_fav else "under", "line": n,
                 "win": win_v, "odds": odds_v, "book": (bo if over_fav else bu)[0],
                 "_ev": (win_v / 100.0 * odds_v - 1) * 100 if (odds_v and odds_v > 1) else -999}
+    if market == "xg":  # 正確比分：去水所有比分→推最高機率那個(預測導向,勝率不加成、無跨家賠率所以以機率排序)
+        cs = e.get("cs") or {}
+        pairs = [(sc, od) for sc, od in cs.items() if od and od > 1]
+        if len(pairs) < 4:
+            return None
+        probs = _devig([od for _, od in pairs])
+        if not probs:
+            return None
+        bi = max(range(len(pairs)), key=lambda i: probs[i])
+        sc, od = pairs[bi]
+        win = round(probs[bi] * 100)
+        return {**base, "side": sc, "line": None, "win": win, "odds": od, "book": "pinnacle",
+                "_ev": win}  # 排序用機率(CS 無跨家最佳賠率,不比 EV)
     return None
 
 
@@ -192,7 +205,7 @@ def _score_map(events, results):
 
 def _build_parlays(open_out):
     """用已推薦的單場(open)組串：一場一腳、跨聯賽可。標準2串×2(價值+穩膽)、專家3串×2(價值+穩膽)。"""
-    legs_ok = [p for p in open_out if p.get("odds") and p.get("odds") > 1]
+    legs_ok = [p for p in open_out if p.get("odds") and p.get("odds") > 1 and p.get("market") != "xg"]  # 正確比分不進串關
     ev = lambda p: p["win"] / 100.0 * p["odds"] - 1
     game = lambda p: (p["home_zh"], p["away_zh"], p["start"])
     VAL_WIN_FLOOR = 50  # 價值串每腳勝率下限：避免疊一堆冷門變成超低命中的樂透
@@ -265,7 +278,8 @@ def build(events, results, prev, now=None):
             ms = datetime.fromisoformat(start.replace("Z", "+00:00")).timestamp() * 1000
         except Exception:
             continue
-        for market in ("ml", "sp", "uo"):
+        markets_list = ("ml", "sp", "uo", "xg") if e.get("cs") else ("ml", "sp", "uo")  # xg=正確比分(僅足球有 cs 時)
+        for market in markets_list:
             c = _candidate(e, market)
             if c:
                 c["_ms"] = ms

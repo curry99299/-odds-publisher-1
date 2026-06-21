@@ -51,6 +51,8 @@ class MatchOdds:
     spreads: dict = field(default_factory=dict)
     # 大小分：{ "總分線(str)": {"over": odds, "under": odds} }，例 {"8.5":{"over":1.9,"under":1.92}}
     totals: dict = field(default_factory=dict)
+    # 正確比分（足球，目前僅 Pinnacle）：{ "主-客": odds }，例 {"1-0":7.5,"2-1":8.0}
+    cs: dict = field(default_factory=dict)
 
     def to_dict(self):
         return asdict(self)

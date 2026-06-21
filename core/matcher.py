@@ -213,6 +213,21 @@ def merge(rows):
             for line, d in (r.totals or {}).items():
                 total_lines.setdefault(_line_key(line), {})[r.source] = {"over": d.get("over"), "under": d.get("under")}
 
+        # 正確比分（僅 Pinnacle 有；對齊 anchor 主客，翻轉時比分主客對調）
+        cs = {}
+        for r in ev["rows"]:
+            rcs = getattr(r, "cs", None)
+            if r.source != "pinnacle" or not rcs:
+                continue
+            swap = not teams_similar(norm_team(anchor.home), norm_team(r.home))
+            for sc, od in rcs.items():
+                try:
+                    h, a = sc.split("-")
+                except ValueError:
+                    continue
+                cs[f"{a}-{h}" if swap else sc] = od
+            break
+
         out.append({
             "sport": anchor.sport,
             "home": anchor.home,
@@ -231,6 +246,7 @@ def merge(rows):
             "source_count": len(sources),
             "spread": _agg_lines(spread_lines, ("home", "away")),
             "total": _agg_lines(total_lines, ("over", "under")),
+            "cs": cs,
         })
 
     # 排序：聯盟優先序(NBA>MLB>中職>日職>韓職>五大聯賽>其他) → 滾球優先 → 來源數多 → 開賽時間
