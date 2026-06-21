@@ -46,6 +46,18 @@ def _is_major(t):
     return any(re.search(p, t) for p in pats)
 
 
+# 排除佔位/衍生市場事件（隊名是 Home/Away、主場/客隊，或含「得分/主場/客場」等非真實對戰字樣）
+_PLACEHOLDER = {"home", "away", "tbd", "team a", "team b", "主場", "客場", "主隊", "客隊", "over", "under"}
+def _real_match(e):
+    for k in ("home", "away", "home_zh", "away_zh"):
+        v = (e.get(k) or "").strip()
+        if not v:
+            continue  # 缺欄位(如 locked 只有 zh)→ 跳過該欄
+        if v.lower() in _PLACEHOLDER or re.search(r"得分|主場|客場|主隊|客隊", v):
+            return False
+    return True
+
+
 def _league_code(league, zh):
     t = f"{league} {zh}".lower()
     table = [(r'\bmlb\b|美國職棒大聯盟', 'MLB'), (r'\bnpb\b|nippon|日本職棒', 'NPB'),
@@ -192,6 +204,8 @@ def build(events, results, prev, now=None):
     for e in (events or []):
         if not _is_major(f"{e.get('league') or ''} {e.get('league_zh') or ''}".lower()):
             continue
+        if not _real_match(e):  # 跳過佔位/衍生市場（Home/Away、主場/客隊、得分…）
+            continue
         start = e.get("start")
         if not start:
             continue
@@ -262,7 +276,7 @@ def build(events, results, prev, now=None):
             return datetime.fromisoformat((iso or "").replace("Z", "+00:00")).timestamp() * 1000
         except Exception:
             return 0
-    locked = {k: v for k, v in locked.items() if ms_of(v.get("start")) >= now_ms - LOCKED_KEEP_MS}
+    locked = {k: v for k, v in locked.items() if ms_of(v.get("start")) >= now_ms - LOCKED_KEEP_MS and _real_match(v)}
 
     # 7) 異動（open 較上一份）
     new_events = []
