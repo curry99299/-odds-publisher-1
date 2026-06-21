@@ -20,6 +20,7 @@ EVENT_KEEP_MS = 24 * 3600 * 1000        # 異動保留 24 小時
 
 
 WIN_BOOST = 6  # 去水勝率全體加成（上限 100）；+6 讓 EV(=勝率×賠率−1) 幾乎全為正（最低約 +1.7）；EV 由前端自動重算
+WIN_FLOOR = 55  # 推薦池最低去水勝率（過濾高賠低勝率雜訊）；排序改用 EV(價值)由高到低
 
 
 def _win(prob):
@@ -194,8 +195,11 @@ def build(events, results, prev, now=None):
                 cands.append(c)
 
     # 2) 排序池＝未開賽且 48h 內；分級前25/20/15%
-    pool = [c for c in cands if c["_ms"] > now_ms and c["_ms"] <= now_ms + HORIZON_MS]
-    pool.sort(key=lambda c: (-c["win"], -(c.get("odds") or 0)))
+    # 推薦池：未開賽 48h 內 + 有賠率 + 去水勝率達門檻；依 EV(價值) 由高到低排序（取代原勝率排序）
+    pool = [c for c in cands if c["_ms"] > now_ms and c["_ms"] <= now_ms + HORIZON_MS and c.get("odds") and c["win"] >= WIN_FLOOR]
+    for c in pool:
+        c["_ev"] = (c["win"] / 100.0 * c["odds"] - 1) * 100
+    pool.sort(key=lambda c: (-c["_ev"], -c["win"]))
     N = len(pool)
     nE, nS, nB = round(N * 0.25), round(N * 0.20), round(N * 0.15)
     tier_of = {}
