@@ -190,6 +190,58 @@ def _score_map(events, results):
     return m
 
 
+def _build_parlays(open_out):
+    """用已推薦的單場(open)組串：一場一腳、跨聯賽可。標準2串×2(價值+穩膽)、專家3串×2(價值+穩膽)。"""
+    legs_ok = [p for p in open_out if p.get("odds") and p.get("odds") > 1]
+    ev = lambda p: p["win"] / 100.0 * p["odds"] - 1
+    game = lambda p: (p["home_zh"], p["away_zh"], p["start"])
+    VAL_WIN_FLOOR = 50  # 價值串每腳勝率下限：避免疊一堆冷門變成超低命中的樂透
+    best_ev, best_win = {}, {}  # 每場代表腳
+    for p in legs_ok:
+        g = game(p)
+        if p["win"] >= VAL_WIN_FLOOR and (g not in best_ev or ev(p) > ev(best_ev[g])):
+            best_ev[g] = p
+        if g not in best_win or p["win"] > best_win[g]["win"]:
+            best_win[g] = p
+    val_pool = sorted(best_ev.values(), key=lambda p: -ev(p))      # 價值：勝率≥50% 中 EV 最高
+    safe_pool = sorted(best_win.values(), key=lambda p: -p["win"])  # 穩膽：勝率高
+
+    def mk(legs, plan, stars, strat):
+        import functools
+        odds = round(functools.reduce(lambda a, l: a * l["odds"], legs, 1.0), 2)
+        win = functools.reduce(lambda a, l: a * l["win"] / 100.0, legs, 1.0)
+        return {
+            "id": strat + "|" + "|".join(l["id"] for l in legs), "strategy": strat, "plan": plan, "stars": stars,
+            "legs_count": len(legs), "odds": odds, "win": round(win * 100), "ev": round((win * odds - 1) * 100, 1),
+            "dateId": min(l["start"][:10] for l in legs),
+            "legs": [{"league": l["league"], "sport": l["sport"], "home_zh": l["home_zh"], "away_zh": l["away_zh"],
+                      "market": l["market"], "side": l["side"], "line": l["line"], "odds": l["odds"], "start": l["start"]} for l in legs],
+        }
+
+    out = []
+    seen_sets = set()
+    def add(pool, count, plan, stars, strat):
+        # 取前 count 腳；若與已加入的串腳組完全相同則往後挪一腳避免重複
+        for shift in range(0, max(1, len(pool) - count + 1)):
+            legs = pool[shift:shift + count]
+            if len(legs) < count:
+                return
+            key = frozenset(l["id"] for l in legs)
+            if key in seen_sets:
+                continue
+            seen_sets.add(key)
+            out.append(mk(legs, plan, stars, strat))
+            return
+
+    # 標準 2串：價值 + 穩膽
+    add(val_pool, 2, "standard", 2, "價值2串")
+    add(safe_pool, 2, "standard", 2, "穩膽2串")
+    # 專家 3串：價值 + 穩膽
+    add(val_pool, 3, "pro", 3, "價值3串")
+    add(safe_pool, 3, "pro", 3, "穩膽3串")
+    return out
+
+
 def build(events, results, prev, now=None):
     """產出新的 pinnacle.json 結構。prev=上一份（dict）；now=datetime(UTC)。"""
     now = now or datetime.now(timezone.utc)
@@ -309,4 +361,5 @@ def build(events, results, prev, now=None):
     events_out = (new_events + prev_events)
     events_out = [e for e in events_out if ms_of(e.get("at")) >= now_ms - EVENT_KEEP_MS][:500]
 
-    return {"updated_at": at, "open": open_out, "locked": list(locked.values()), "events": events_out}
+    parlays = _build_parlays(open_out)
+    return {"updated_at": at, "open": open_out, "locked": list(locked.values()), "events": events_out, "parlays": parlays}
