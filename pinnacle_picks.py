@@ -223,17 +223,29 @@ def build(events, results, prev, now=None):
     # 推薦池：未開賽 48h 內 + 有賠率；依 EV(價值) 由高到低排序（不設勝率下限 → 高賠值盤也進得來）。
     # _ev 已在 _candidate 各自算好：PK盤=原始去水 EV(推 EV 最高邊)、讓分/大小=加成勝率 EV(推 favored)。
     pool = [c for c in cands if c["_ms"] > now_ms and c["_ms"] <= now_ms + HORIZON_MS and c.get("odds")]
-    pool.sort(key=lambda c: (-(c.get("_ev") if c.get("_ev") is not None else -999), -c["win"]))
-    N = len(pool)
-    nE, nS, nB = round(N * 0.25), round(N * 0.20), round(N * 0.15)
+    # 分級：每個「聯盟×盤口」各自排序分級，避免某盤口霸佔專家、某盤口完全沒專家（分布平均、UX 佳）。
+    #   PK盤(ml)依 EV(_ev)；讓分/大小(sp/uo)依勝率高。各取前 25/20/15% = 專家/標準/入門；小桶保底至少 1 場專家。
+    from collections import defaultdict
+    grouped = defaultdict(list)
+    for c in pool:
+        grouped[(c["league"], c["market"])].append(c)
     tier_of = {}
-    for i, c in enumerate(pool):
-        if i < nE:
-            tier_of[c["id"]] = ("pro", 3)
-        elif i < nE + nS:
-            tier_of[c["id"]] = ("standard", 2)
-        elif i < nE + nS + nB:
-            tier_of[c["id"]] = ("basic", 1)
+    for (_lg, mkt), grp in grouped.items():
+        if mkt == "ml":
+            grp.sort(key=lambda c: -(c.get("_ev") if c.get("_ev") is not None else -999))
+        else:
+            grp.sort(key=lambda c: (-c["win"], -(c.get("_ev") if c.get("_ev") is not None else -999)))
+        n = len(grp)
+        nE, nS, nB = round(n * 0.25), round(n * 0.20), round(n * 0.15)
+        if n >= 1 and nE + nS + nB == 0:
+            nE = 1  # 小桶(1~2場)保底：至少最佳 1 場進專家
+        for i, c in enumerate(grp):
+            if i < nE:
+                tier_of[c["id"]] = ("pro", 3)
+            elif i < nE + nS:
+                tier_of[c["id"]] = ("standard", 2)
+            elif i < nE + nS + nB:
+                tier_of[c["id"]] = ("basic", 1)
 
     # 3) open（推薦的未開賽）＋ conf_chg（較上一份）
     open_out = []
