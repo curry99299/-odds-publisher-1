@@ -110,8 +110,15 @@ def _candidate(e, market):
             outs = [("home", p[0], _best(bst.get("home"))), ("draw", p[1], _best(bst.get("draw"))), ("away", p[2], _best(bst.get("away")))]
         else:
             outs = [("home", p[0], _best(bst.get("home"))), ("away", p[1], _best(bst.get("away")))]
-        side, prob, (book, odds) = max(outs, key=lambda x: x[1])
-        return {**base, "side": side, "line": None, "win": _win(prob), "odds": odds, "book": book}
+        # PK盤：用原始去水勝率(未加成 prob)算各邊 EV，在「合理機率」邊裡推 EV 最高那邊（可推價值冷門，但不挑超低機率的雜訊盤）
+        ML_FLOOR = 0.30  # 只考慮原始勝率 ≥30% 的邊；都不到(大冷門場)→回推勝率最高邊
+        cand = [o for o in outs if o[1] >= ML_FLOOR] or outs
+        def _evof(o):
+            od = o[2][1]
+            return (o[1] * od - 1) if (od and od > 1) else -9
+        side, prob, (book, odds) = max(cand, key=_evof)  # 選邊：用原始去水 EV 判斷
+        ev = (_win(prob) / 100.0 * odds - 1) * 100 if (odds and odds > 1) else -999  # 排序：用加成勝率 EV，與讓分/大小同基準才公平
+        return {**base, "side": side, "line": None, "win": _win(prob), "odds": odds, "book": book, "_ev": ev}
     if market == "sp":
         lines = []
         for s in (e.get("spread") or []):
@@ -128,8 +135,10 @@ def _candidate(e, market):
             n = float(ln)
         except Exception:
             n = 0.0
+        win_v, odds_v = _win(max(p[0], p[1])), (ba if home_fav else bb)[1]
         return {**base, "side": "home" if home_fav else "away", "line": (n if home_fav else -n),
-                "win": _win(max(p[0], p[1])), "odds": (ba if home_fav else bb)[1], "book": (ba if home_fav else bb)[0]}
+                "win": win_v, "odds": odds_v, "book": (ba if home_fav else bb)[0],
+                "_ev": (win_v / 100.0 * odds_v - 1) * 100 if (odds_v and odds_v > 1) else -999}
     if market == "uo":
         lines = []
         for t in (e.get("total") or []):
@@ -146,8 +155,10 @@ def _candidate(e, market):
             n = float(ln)
         except Exception:
             n = None
+        win_v, odds_v = _win(max(p[0], p[1])), (bo if over_fav else bu)[1]
         return {**base, "side": "over" if over_fav else "under", "line": n,
-                "win": _win(max(p[0], p[1])), "odds": (bo if over_fav else bu)[1], "book": (bo if over_fav else bu)[0]}
+                "win": win_v, "odds": odds_v, "book": (bo if over_fav else bu)[0],
+                "_ev": (win_v / 100.0 * odds_v - 1) * 100 if (odds_v and odds_v > 1) else -999}
     return None
 
 
@@ -195,11 +206,10 @@ def build(events, results, prev, now=None):
                 cands.append(c)
 
     # 2) 排序池＝未開賽且 48h 內；分級前25/20/15%
-    # 推薦池：未開賽 48h 內 + 有賠率；依 EV(價值) 由高到低排序（不設勝率下限 → 高賠值盤也進得來）
+    # 推薦池：未開賽 48h 內 + 有賠率；依 EV(價值) 由高到低排序（不設勝率下限 → 高賠值盤也進得來）。
+    # _ev 已在 _candidate 各自算好：PK盤=原始去水 EV(推 EV 最高邊)、讓分/大小=加成勝率 EV(推 favored)。
     pool = [c for c in cands if c["_ms"] > now_ms and c["_ms"] <= now_ms + HORIZON_MS and c.get("odds")]
-    for c in pool:
-        c["_ev"] = (c["win"] / 100.0 * c["odds"] - 1) * 100
-    pool.sort(key=lambda c: (-c["_ev"], -c["win"]))
+    pool.sort(key=lambda c: (-(c.get("_ev") if c.get("_ev") is not None else -999), -c["win"]))
     N = len(pool)
     nE, nS, nB = round(N * 0.25), round(N * 0.20), round(N * 0.15)
     tier_of = {}
