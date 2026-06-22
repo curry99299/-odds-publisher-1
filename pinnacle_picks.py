@@ -190,6 +190,13 @@ def _candidate(e, market):
         lines = []
         for s in (e.get("spread") or []):
             pin = (s.get("sources") or {}).get("pinnacle") or {}
+            try:
+                lv = float(s.get("line"))
+            except (TypeError, ValueError):
+                continue
+            h = lv * 2  # 讓分/受讓只推 x.5 盤口：整數會平手、.25/.75 亞盤會半退款，一律排除
+            if abs(h - round(h)) > 1e-9 or round(h) % 2 == 0:
+                continue
             if (pin.get("home") or 0) > 1 and (pin.get("away") or 0) > 1:
                 bb = s.get("best") or {}
                 lines.append((s.get("line"), pin["home"], pin["away"], _best(bb.get("home")), _best(bb.get("away"))))
