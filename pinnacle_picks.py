@@ -11,7 +11,17 @@
 狀態自帶在「上一份 pinnacle.json」裡（publish.py 會先 GET 回來），雲端無狀態也安全。
 """
 import re
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
+
+
+def _tpe_date(iso):
+    """UTC ISO → 台灣日期(YYYY-MM-DD)。結算用，與賽果來源(playsport, TPE)的 date 對齊。"""
+    if not iso:
+        return ""
+    try:
+        return (datetime.fromisoformat(iso.replace("Z", "+00:00")) + timedelta(hours=8)).strftime("%Y-%m-%d")
+    except Exception:
+        return iso[:10]
 
 HORIZON_MS = 48 * 3600 * 1000     # open 列未來 48 小時
 LOCK_MIN, LOCK_MAX = -2.0, 13.0   # 賽前最後一刻鎖定窗（分鐘；與 capture_closings 一致）
@@ -110,6 +120,8 @@ def _candidate(e, market):
     base = {
         "id": _doc_id(e, market), "sport": e.get("sport"), "league": _league_code(e.get("league") or "", e.get("league_zh") or ""),
         "home_zh": home_zh, "away_zh": away_zh, "start": e.get("start"), "market": market,
+        # 結算用：英文隊名(跨來源一致) + TPE 日期(與賽果 date 對齊)
+        "home_en": (e.get("home") or "").strip(), "away_en": (e.get("away") or "").strip(), "match_date": _tpe_date(e.get("start")),
     }
     if market == "ml":
         pin = (e.get("sources") or {}).get("pinnacle") or {}
@@ -191,18 +203,23 @@ def _candidate(e, market):
 
 
 def _score_map(events, results):
-    """(sport, home, away, date) → (home_score, away_score, final?)。events=滾球即時、results=完賽。"""
+    """以「運動 + 英文兩隊(不分主客) + TPE日期」為 key（中文名跨來源會分歧，英文一致）。
+    值含 home_en 以還原主客方向。events=滾球即時(start UTC)、results=完賽(自帶 date)。"""
     m = {}
-    def key(e):
-        return (e.get("sport"), e.get("home_zh") or e.get("home"), e.get("away_zh") or e.get("away"), (e.get("start") or "")[:10])
-    for e in (events or []):
-        hs, as_ = e.get("home_score"), e.get("away_score")
-        if hs is not None and as_ is not None:
-            m[key(e)] = (hs, as_, False)
-    for e in (results or []):  # 完賽覆蓋（視為 final）
-        hs, as_ = e.get("home_score"), e.get("away_score")
-        if hs is not None and as_ is not None:
-            m[key(e)] = (hs, as_, True)
+
+    def add(sport, hen, aen, hs, as_, date, final):
+        hen, aen = (hen or "").strip().lower(), (aen or "").strip().lower()
+        if not hen or not aen or hs is None or as_ is None or not date:
+            return
+        key = (sport, frozenset((hen, aen)), date)
+        if key in m and m[key]["final"] and not final:
+            return  # 已有完賽結果，別被滾球比分蓋掉
+        m[key] = {"home_en": hen, "hs": hs, "as": as_, "final": final}
+
+    for e in (events or []):  # 滾球即時
+        add(e.get("sport"), e.get("home"), e.get("away"), e.get("home_score"), e.get("away_score"), _tpe_date(e.get("start")), bool(e.get("final")))
+    for e in (results or []):  # 完賽(date 已是 TPE)
+        add(e.get("sport"), e.get("home"), e.get("away"), e.get("home_score"), e.get("away_score"), e.get("date") or _tpe_date(e.get("start")), True)
     return m
 
 
@@ -327,7 +344,7 @@ def build(events, results, prev, now=None):
         chg = 0
         if pv and pv.get("win") is not None:
             chg = 1 if c["win"] > pv["win"] else (-1 if c["win"] < pv["win"] else 0)
-        open_out.append({k: c[k] for k in ("id", "sport", "league", "home_zh", "away_zh", "start", "market", "side", "line", "win", "odds", "book")}
+        open_out.append({k: c[k] for k in ("id", "sport", "league", "home_zh", "away_zh", "home_en", "away_en", "match_date", "start", "market", "side", "line", "win", "odds", "book")}
                         | {"plan": plan, "units": units, "conf_chg": chg, "status": "open"})
 
     # 4) 鎖定：賽前最後一刻窗內、且為推薦者 → 凍結進 locked（同 id 覆寫＝收盤最後一份）
@@ -336,19 +353,24 @@ def build(events, results, prev, now=None):
         mins = (c["_ms"] - now_ms) / 60000.0
         if LOCK_MIN <= mins <= LOCK_MAX and c["id"] in tier_of:
             plan, units = tier_of[c["id"]]
-            locked[c["id"]] = {k: c[k] for k in ("id", "sport", "league", "home_zh", "away_zh", "start", "market", "side", "line", "win", "odds", "book")} | {
+            locked[c["id"]] = {k: c[k] for k in ("id", "sport", "league", "home_zh", "away_zh", "home_en", "away_en", "match_date", "start", "market", "side", "line", "win", "odds", "book")} | {
                 "plan": plan, "units": units, "status": "locked", "home_score": None, "away_score": None, "locked_at": now.isoformat()}
 
-    # 5) 結算：locked 已開賽者抓比分
+    # 5) 結算：locked 用「英文兩隊 + TPE日期」配對賽果(中文名跨來源分歧→用英文)，並依 home_en 還原主客
     sm = _score_map(events, results)
     for lid, lp in locked.items():
         if lp.get("status") == "settled":
             continue
-        k = (lp.get("sport"), lp.get("home_zh"), lp.get("away_zh"), (lp.get("start") or "")[:10])
-        sc = sm.get(k)
+        hen, aen = (lp.get("home_en") or "").strip().lower(), (lp.get("away_en") or "").strip().lower()
+        date = lp.get("match_date") or _tpe_date(lp.get("start"))
+        if not hen or not aen:
+            continue  # 舊版鎖定無英文名→無法可靠結算(會隨 7 天清掉)
+        sc = sm.get((lp.get("sport"), frozenset((hen, aen)), date))
         if sc:
-            lp["home_score"], lp["away_score"] = sc[0], sc[1]
-            if sc[2]:
+            same = sc["home_en"] == hen
+            lp["home_score"] = sc["hs"] if same else sc["as"]
+            lp["away_score"] = sc["as"] if same else sc["hs"]
+            if sc["final"]:
                 lp["status"] = "settled"
 
     # 6) 清理：locked 保留 7 天、events 保留 24h
