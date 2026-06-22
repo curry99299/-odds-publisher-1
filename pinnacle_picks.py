@@ -23,6 +23,46 @@ def _tpe_date(iso):
     except Exception:
         return iso[:10]
 
+
+import os
+import json as _json
+try:  # 用專案既有的隊名正規化 + 模糊比對(跨來源隊名不一致時靠它)
+    from core.normalize import norm_team, teams_similar
+except Exception:  # 隔離測試無 core 時退化
+    def norm_team(x, sport=None):
+        return (x or "").strip().lower()
+
+    def teams_similar(a, b):
+        return bool(a) and a == b
+
+_ZH2EN = None
+
+
+def _zh2en(zh):
+    """舊版 locked 只有中文隊名 → 反查『正規化英文』(translate 快取的 key 即正規化英文)，供結算配對。"""
+    global _ZH2EN
+    if _ZH2EN is None:
+        _ZH2EN = {}
+        try:  # 1) i18n 靜態表(國家隊/球隊 en→zh)：反查後正規化(國家隊優先，最乾淨)
+            from core.i18n import _TEAMS_EN
+            for en, z in _TEAMS_EN.items():
+                _ZH2EN.setdefault(z, norm_team(en))
+        except Exception:
+            pass
+        try:  # 2) translate 快取(key 本身即正規化英文)
+            p = os.path.join(os.path.dirname(__file__), "data", "team_translations.json")
+            for en_key, z in _json.load(open(p, encoding="utf-8")).get("teams", {}).items():
+                _ZH2EN.setdefault(z, en_key)
+        except Exception:
+            pass
+    return _ZH2EN.get(zh, "")
+
+
+def _team_norm(en, zh):
+    """隊名 → 正規化英文：有英文用英文，沒有(舊 locked)就用中文反查。"""
+    return norm_team(en) if en else _zh2en(zh or "")
+
+
 HORIZON_MS = 48 * 3600 * 1000     # open 列未來 48 小時
 LOCK_MIN, LOCK_MAX = -2.0, 13.0   # 賽前最後一刻鎖定窗（分鐘；與 capture_closings 一致）
 LOCKED_KEEP_MS = 7 * 24 * 3600 * 1000   # locked 保留 7 天
@@ -202,25 +242,24 @@ def _candidate(e, market):
     return None
 
 
-def _score_map(events, results):
-    """以「運動 + 英文兩隊(不分主客) + TPE日期」為 key（中文名跨來源會分歧，英文一致）。
-    值含 home_en 以還原主客方向。events=滾球即時(start UTC)、results=完賽(自帶 date)。"""
-    m = {}
+def _score_list(events, results):
+    """彙整可結算的比分：[{sport, hn(正規化英文主), an(客), date(TPE), hs, as, final}]。
+    用模糊隊名比對(teams_similar)而非精確 key，吸收跨來源隊名差異。"""
+    out = []
 
-    def add(sport, hen, aen, hs, as_, date, final):
-        hen, aen = (hen or "").strip().lower(), (aen or "").strip().lower()
-        if not hen or not aen or hs is None or as_ is None or not date:
+    def add(sport, hen, aen, hzh, azh, hs, as_, date, final):
+        hn, an = _team_norm(hen, hzh), _team_norm(aen, azh)
+        if not hn or not an or hs is None or as_ is None or not date:
             return
-        key = (sport, frozenset((hen, aen)), date)
-        if key in m and m[key]["final"] and not final:
-            return  # 已有完賽結果，別被滾球比分蓋掉
-        m[key] = {"home_en": hen, "hs": hs, "as": as_, "final": final}
+        out.append({"sport": sport, "hn": hn, "an": an, "date": date, "hs": hs, "as": as_, "final": final})
 
     for e in (events or []):  # 滾球即時
-        add(e.get("sport"), e.get("home"), e.get("away"), e.get("home_score"), e.get("away_score"), _tpe_date(e.get("start")), bool(e.get("final")))
+        add(e.get("sport"), e.get("home"), e.get("away"), e.get("home_zh"), e.get("away_zh"),
+            e.get("home_score"), e.get("away_score"), _tpe_date(e.get("start")), bool(e.get("final")))
     for e in (results or []):  # 完賽(date 已是 TPE)
-        add(e.get("sport"), e.get("home"), e.get("away"), e.get("home_score"), e.get("away_score"), e.get("date") or _tpe_date(e.get("start")), True)
-    return m
+        add(e.get("sport"), e.get("home"), e.get("away"), e.get("home_zh"), e.get("away_zh"),
+            e.get("home_score"), e.get("away_score"), e.get("date") or _tpe_date(e.get("start")), True)
+    return out
 
 
 def _build_parlays(open_out):
@@ -356,21 +395,32 @@ def build(events, results, prev, now=None):
             locked[c["id"]] = {k: c[k] for k in ("id", "sport", "league", "home_zh", "away_zh", "home_en", "away_en", "match_date", "start", "market", "side", "line", "win", "odds", "book")} | {
                 "plan": plan, "units": units, "status": "locked", "home_score": None, "away_score": None, "locked_at": now.isoformat()}
 
-    # 5) 結算：locked 用「英文兩隊 + TPE日期」配對賽果(中文名跨來源分歧→用英文)，並依 home_en 還原主客
-    sm = _score_map(events, results)
+    # 5) 結算：locked 用「正規化英文兩隊(模糊比對) + TPE日期」配對賽果。
+    #    新 locked 有 home_en；舊 locked 只有中文→反查英文。teams_similar 吸收跨來源隊名差異、並自動判主客方向。
+    sl = _score_list(events, results)
     for lid, lp in locked.items():
         if lp.get("status") == "settled":
             continue
-        hen, aen = (lp.get("home_en") or "").strip().lower(), (lp.get("away_en") or "").strip().lower()
+        ph = _team_norm(lp.get("home_en"), lp.get("home_zh"))
+        pa = _team_norm(lp.get("away_en"), lp.get("away_zh"))
         date = lp.get("match_date") or _tpe_date(lp.get("start"))
-        if not hen or not aen:
-            continue  # 舊版鎖定無英文名→無法可靠結算(會隨 7 天清掉)
-        sc = sm.get((lp.get("sport"), frozenset((hen, aen)), date))
-        if sc:
-            same = sc["home_en"] == hen
-            lp["home_score"] = sc["hs"] if same else sc["as"]
-            lp["away_score"] = sc["as"] if same else sc["hs"]
-            if sc["final"]:
+        if not ph or not pa or not date:
+            continue
+        match = None
+        for s in sl:
+            if s["sport"] != lp.get("sport") or s["date"] != date:
+                continue
+            direct = teams_similar(ph, s["hn"]) and teams_similar(pa, s["an"])
+            swap = teams_similar(ph, s["an"]) and teams_similar(pa, s["hn"])
+            if direct or swap:
+                match = (s, direct)
+                if s["final"]:
+                    break  # 優先採完賽結果
+        if match:
+            s, direct = match
+            lp["home_score"] = s["hs"] if direct else s["as"]
+            lp["away_score"] = s["as"] if direct else s["hs"]
+            if s["final"]:
                 lp["status"] = "settled"
 
     # 6) 清理：locked 保留 7 天、events 保留 24h

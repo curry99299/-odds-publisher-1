@@ -291,7 +291,7 @@ def run_once():
     except Exception as e:
         print(f"[playsport_live] 終場補洞略過: {e}")
     try:
-        results.extend(espn_scores.fetch_soccer_finals(days=2))   # ESPN 足球終場(世界盃/五大聯賽)→ 供 Pinnacle 去水結算
+        results.extend(espn_scores.fetch_espn_finals(days=3))   # ESPN 各運動終場(MLB/NBA/WNBA/NHL/足球,近3天)→ 供 Pinnacle 去水結算補洞
     except Exception as e:
         print(f"[espn] 足球終場略過: {e}")
     # 從 score 字串解析出數值比分欄（events + results），供前端直接讀

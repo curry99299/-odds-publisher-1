@@ -87,20 +87,24 @@ def _board(path, sport):
     return out
 
 
-# 足球終場（給結算用）：世界盃 + 五大聯賽/歐冠/巴甲/MLS，抓近 N 天 state=post 的比賽
+# 終場（給結算用）：各運動 ESPN scoreboard 抓近 N 天 state=post 的比賽。
+# 足球：世界盃 + 五大聯賽/歐冠/巴甲/MLS；球類：MLB/NBA/WNBA/NHL（playsport 漏收的場次靠這補齊）。
 SOCCER_LEAGUES = ["fifa.world", "eng.1", "esp.1", "ita.1", "ger.1", "fra.1", "uefa.champions", "bra.1", "usa.1"]
+FINAL_BOARDS = ([("baseball/mlb", "baseball"), ("basketball/nba", "basketball"),
+                 ("basketball/wnba", "basketball"), ("hockey/nhl", "hockey")]
+                + [(f"soccer/{lg}", "soccer") for lg in SOCCER_LEAGUES])
 
 
-def fetch_soccer_finals(days=2):
+def fetch_espn_finals(days=3):
     import datetime as _dt
     out = []
     today = _dt.datetime.now(_dt.timezone.utc)
     seen = set()
     for d in range(days):
         ymd = (today - _dt.timedelta(days=d)).strftime("%Y%m%d")
-        for lg in SOCCER_LEAGUES:
+        for path, sport in FINAL_BOARDS:
             try:
-                r = requests.get(f"{BASE}/soccer/{lg}/scoreboard?dates={ymd}", headers=HEADERS, timeout=15)
+                r = requests.get(f"{BASE}/{path}/scoreboard?dates={ymd}", headers=HEADERS, timeout=15)
                 r.raise_for_status()
                 for e in r.json().get("events", []):
                     c = (e.get("competitions") or [{}])[0]
@@ -111,23 +115,26 @@ def fetch_soccer_finals(days=2):
                     if not h or not a:
                         continue
                     home, away = h["team"]["displayName"], a["team"]["displayName"]
-                    # ESPN date(UTC) → 台灣日期，與 playsport results 對齊
-                    iso = e.get("date") or ""
+                    iso = e.get("date") or ""  # ESPN date(UTC) → 台灣日期，與 playsport results 對齊
                     try:
                         tpe = (_dt.datetime.fromisoformat(iso.replace("Z", "+00:00")) + _dt.timedelta(hours=8)).strftime("%Y-%m-%d")
                     except Exception:
                         tpe = iso[:10]
-                    key = (home, away, tpe)
+                    key = (sport, home, away, tpe)
                     if key in seen:
                         continue
                     seen.add(key)
-                    out.append({"sport": "soccer", "home": home, "away": away,
+                    out.append({"sport": sport, "home": home, "away": away,
                                 "home_score": int(h.get("score") or 0), "away_score": int(a.get("score") or 0),
-                                "score": f'{h.get("score")}:{a.get("score")}', "date": tpe, "league": lg, "final": True})
+                                "score": f'{h.get("score")}:{a.get("score")}', "date": tpe, "league": path, "final": True})
             except Exception:
                 pass
-    print(f"[espn] 足球終場 {len(out)} 場（近 {days} 天）")
+    print(f"[espn] 終場 {len(out)} 場（近 {days} 天，含 MLB/NBA/WNBA/NHL/足球）")
     return out
+
+
+def fetch_soccer_finals(days=3):  # 相容舊名
+    return fetch_espn_finals(days)
 
 
 def fetch_scores():
