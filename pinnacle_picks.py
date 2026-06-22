@@ -53,7 +53,10 @@ def _real_match(e):
         v = (e.get(k) or "").strip()
         if not v:
             continue  # 缺欄位(如 locked 只有 zh)→ 跳過該欄
-        if v.lower() in _PLACEHOLDER or re.search(r"得分|主場|客場|主隊|客隊", v):
+        # 佔位/衍生盤名稱：主場/客場/得分、英文 prop(Home Runs (14 Games)、Total Goals…)、含「(N Games)」、含 Runs/Goals/Points 等統計字
+        if v.lower() in _PLACEHOLDER or re.search(
+            r"得分|主場|客場|主隊|客隊|\(\s*\d+\s*games?\s*\)|\b(runs|goals|points|corners|cards|bookings|hits|sets|games)\b", v, re.I
+        ):
             return False
     return True
 
